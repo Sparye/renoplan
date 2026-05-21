@@ -5,19 +5,36 @@
     GRID_SIZE,
     pixelsToMetres,
     selectedRoom,
+    selectedWall,
     trayRoomTemplates
   } from '$lib/editor/editorStore';
-  import type { Room, TrayRoomTemplate } from '$lib/domain/types';
+  import type { ResizeHandle } from '$lib/editor/editorStore';
+  import type {
+    Opening,
+    Room,
+    TrayRoomTemplate,
+    Wall
+  } from '$lib/domain/types';
 
   const CANVAS_WIDTH = 960;
   const CANVAS_HEIGHT = 620;
 
   let canvas: SVGSVGElement;
-  let dragging: {
-    roomId: string;
-    offsetX: number;
-    offsetY: number;
-  } | null = null;
+  let interaction:
+    | {
+        mode: 'move';
+        roomId: string;
+        offsetX: number;
+        offsetY: number;
+        historyCaptured: boolean;
+      }
+    | {
+        mode: 'resize';
+        roomId: string;
+        handle: ResizeHandle;
+        historyCaptured: boolean;
+      }
+    | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   const roomFillClasses: Record<Room['type'], string> = {
@@ -33,6 +50,17 @@
     saved: 'text-[#6b7682]',
     saving: 'text-[#996515]',
     offline: 'text-[#a33a3a]'
+  };
+
+  const handleCursors: Record<ResizeHandle, string> = {
+    n: 'cursor-n-resize',
+    e: 'cursor-e-resize',
+    s: 'cursor-s-resize',
+    w: 'cursor-w-resize',
+    ne: 'cursor-ne-resize',
+    se: 'cursor-se-resize',
+    sw: 'cursor-sw-resize',
+    nw: 'cursor-nw-resize'
   };
 
   function scheduleSaved() {
@@ -67,35 +95,77 @@
   }
 
   function handleRoomPointerDown(event: PointerEvent, room: Room) {
+    event.stopPropagation();
     const point = getCanvasPoint(event);
-    dragging = {
+    interaction = {
+      mode: 'move',
       roomId: room.id,
       offsetX: point.x - room.x,
-      offsetY: point.y - room.y
+      offsetY: point.y - room.y,
+      historyCaptured: false
     };
 
     editor.selectRoom(room.id);
     canvas.setPointerCapture(event.pointerId);
   }
 
+  function handleResizePointerDown(
+    event: PointerEvent,
+    roomId: string,
+    handle: ResizeHandle
+  ) {
+    event.stopPropagation();
+    interaction = {
+      mode: 'resize',
+      roomId,
+      handle,
+      historyCaptured: false
+    };
+    editor.selectRoom(roomId);
+    canvas.setPointerCapture(event.pointerId);
+  }
+
+  function handleWallPointerDown(event: PointerEvent, wallId: string) {
+    event.stopPropagation();
+    editor.selectWall(wallId);
+  }
+
   function handleCanvasPointerMove(event: PointerEvent) {
-    if (!dragging) return;
+    if (!interaction) return;
 
     const point = getCanvasPoint(event);
-    editor.moveRoom(
-      dragging.roomId,
-      point.x - dragging.offsetX,
-      point.y - dragging.offsetY
-    );
+
+    if (interaction.mode === 'move') {
+      editor.moveRoom(
+        interaction.roomId,
+        point.x - interaction.offsetX,
+        point.y - interaction.offsetY,
+        {
+          history: !interaction.historyCaptured
+        }
+      );
+    } else {
+      editor.resizeRoom(
+        interaction.roomId,
+        interaction.handle,
+        point.x,
+        point.y,
+        {
+          history: !interaction.historyCaptured
+        }
+      );
+    }
+
+    interaction.historyCaptured = true;
     scheduleSaved();
   }
 
   function handleCanvasPointerUp(event: PointerEvent) {
-    if (dragging && canvas.hasPointerCapture(event.pointerId)) {
+    if (interaction && canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
 
-    dragging = null;
+    interaction = null;
   }
 
   function handleCanvasKeydown(event: KeyboardEvent) {
@@ -111,8 +181,66 @@
     }
   }
 
+  function handleWallKeydown(event: KeyboardEvent, wallId: string) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      editor.selectWall(wallId);
+    }
+  }
+
   function toggleSnap() {
     editor.toggleSnap();
+  }
+
+  function wallOpenings(wall: Wall) {
+    return $editor.plan.openings.filter(
+      (opening) => opening.wallId === wall.id
+    );
+  }
+
+  function openingPosition(wall: Wall, opening: Opening) {
+    const isVertical = wall.x1 === wall.x2;
+    const length = isVertical
+      ? Math.abs(wall.y2 - wall.y1)
+      : Math.abs(wall.x2 - wall.x1);
+    const offset = Math.min(
+      Math.max(0, opening.offset),
+      Math.max(0, length - opening.width)
+    );
+
+    return isVertical
+      ? {
+          x1: wall.x1,
+          y1: Math.min(wall.y1, wall.y2) + offset,
+          x2: wall.x2,
+          y2: Math.min(wall.y1, wall.y2) + offset + opening.width
+        }
+      : {
+          x1: Math.min(wall.x1, wall.x2) + offset,
+          y1: wall.y1,
+          x2: Math.min(wall.x1, wall.x2) + offset + opening.width,
+          y2: wall.y2
+        };
+  }
+
+  function resizeHandles(
+    room: Room
+  ): { handle: ResizeHandle; x: number; y: number }[] {
+    const midX = room.x + room.width / 2;
+    const midY = room.y + room.height / 2;
+    const right = room.x + room.width;
+    const bottom = room.y + room.height;
+
+    return [
+      { handle: 'nw', x: room.x, y: room.y },
+      { handle: 'n', x: midX, y: room.y },
+      { handle: 'ne', x: right, y: room.y },
+      { handle: 'e', x: right, y: midY },
+      { handle: 'se', x: right, y: bottom },
+      { handle: 's', x: midX, y: bottom },
+      { handle: 'sw', x: room.x, y: bottom },
+      { handle: 'w', x: room.x, y: midY }
+    ];
   }
 
   onDestroy(() => clearTimeout(saveTimer));
@@ -198,6 +326,68 @@
         </dl>
       </section>
     {/if}
+
+    {#if $selectedWall}
+      <section class="grid gap-3" aria-live="polite">
+        <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">
+          Selected wall
+        </h2>
+        <dl class="m-0 grid gap-[9px]">
+          <div class="flex items-baseline justify-between gap-4">
+            <dt class="text-[0.78rem] font-bold text-[#66717e] uppercase">
+              Length
+            </dt>
+            <dd class="m-0 text-sm font-bold text-[#17202a]">
+              {pixelsToMetres(
+                Math.hypot(
+                  $selectedWall.x2 - $selectedWall.x1,
+                  $selectedWall.y2 - $selectedWall.y1
+                )
+              ).toFixed(2)}m
+            </dd>
+          </div>
+          <div class="flex items-baseline justify-between gap-4">
+            <dt class="text-[0.78rem] font-bold text-[#66717e] uppercase">
+              Openings
+            </dt>
+            <dd class="m-0 text-sm font-bold text-[#17202a]">
+              {wallOpenings($selectedWall).length}
+            </dd>
+          </div>
+        </dl>
+        <div class="grid gap-2">
+          <button
+            class="min-h-10 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-left text-sm font-bold text-[#17202a]"
+            type="button"
+            on:click={() =>
+              editor.updateWall($selectedWall.id, {
+                structural: !$selectedWall.structural
+              })}
+          >
+            {$selectedWall.structural
+              ? 'Clear structural mark'
+              : 'Mark structural'}
+          </button>
+          <button
+            class="min-h-10 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-left text-sm font-bold text-[#17202a]"
+            type="button"
+            on:click={() =>
+              editor.updateWall($selectedWall.id, {
+                removed: !$selectedWall.removed
+              })}
+          >
+            {$selectedWall.removed ? 'Restore wall' : 'Remove wall'}
+          </button>
+          <button
+            class="min-h-10 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-left text-sm font-bold text-[#17202a]"
+            type="button"
+            on:click={() => editor.addOpening($selectedWall.id)}
+          >
+            Add door/opening
+          </button>
+        </div>
+      </section>
+    {/if}
   </aside>
 
   <section
@@ -212,6 +402,28 @@
         <span class="text-[0.88rem] text-[#6b7682]">Existing v1</span>
       </div>
       <div class="flex items-center gap-3.5">
+        <button
+          class="min-h-9 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-[0.88rem] font-bold text-[#17202a] disabled:cursor-not-allowed disabled:opacity-40"
+          type="button"
+          disabled={$editor.past.length === 0}
+          on:click={() => {
+            editor.undo();
+            scheduleSaved();
+          }}
+        >
+          Undo
+        </button>
+        <button
+          class="min-h-9 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-[0.88rem] font-bold text-[#17202a] disabled:cursor-not-allowed disabled:opacity-40"
+          type="button"
+          disabled={$editor.future.length === 0}
+          on:click={() => {
+            editor.redo();
+            scheduleSaved();
+          }}
+        >
+          Redo
+        </button>
         <label
           class="flex items-center gap-[7px] text-[0.88rem] text-[#344153]"
         >
@@ -228,6 +440,16 @@
         >
           {$editor.saveState}
         </div>
+        <button
+          class="min-h-9 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-[0.88rem] font-bold text-[#17202a]"
+          type="button"
+          on:click={() => {
+            editor.resetLocalPlan();
+            scheduleSaved();
+          }}
+        >
+          Reset
+        </button>
       </div>
     </header>
 
@@ -246,7 +468,7 @@
         on:pointermove={handleCanvasPointerMove}
         on:pointerup={handleCanvasPointerUp}
         on:pointerleave={handleCanvasPointerUp}
-        on:click={() => !dragging && editor.selectRoom(null)}
+        on:click={() => !interaction && editor.selectRoom(null)}
         on:keydown={handleCanvasKeydown}
       >
         <defs>
@@ -307,19 +529,74 @@
                 ).toFixed(2)}m
               </text>
             {/if}
+            {#if room.id === $editor.selectedRoomId}
+              {#each resizeHandles(room) as item (item.handle)}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <rect
+                  class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
+                  x={item.x - 5}
+                  y={item.y - 5}
+                  width="10"
+                  height="10"
+                  rx="2"
+                  vector-effect="non-scaling-stroke"
+                  on:pointerdown={(event) =>
+                    handleResizePointerDown(event, room.id, item.handle)}
+                />
+              {/each}
+            {/if}
           </g>
         {/each}
 
         {#each $editor.plan.walls as wall (wall.id)}
-          <line
-            class={wall.removed
-              ? 'pointer-events-none stroke-white stroke-[8] [stroke-dasharray:12_8]'
-              : 'pointer-events-none stroke-[#111827] stroke-[5]'}
-            x1={wall.x1}
-            y1={wall.y1}
-            x2={wall.x2}
-            y2={wall.y2}
-          />
+          <g
+            role="button"
+            tabindex="0"
+            aria-label={`Select shared wall between ${wall.roomIds.join(' and ')}`}
+            on:pointerdown={(event) => handleWallPointerDown(event, wall.id)}
+            on:click={(event) => event.stopPropagation()}
+            on:keydown={(event) => handleWallKeydown(event, wall.id)}
+          >
+            <line
+              class="cursor-pointer stroke-transparent stroke-[18]"
+              x1={wall.x1}
+              y1={wall.y1}
+              x2={wall.x2}
+              y2={wall.y2}
+            />
+            <line
+              class={wall.removed
+                ? `pointer-events-none stroke-white stroke-[8] [stroke-dasharray:12_8] ${
+                    wall.id === $editor.selectedWallId
+                      ? 'drop-shadow-[0_0_2px_#0f766e]'
+                      : ''
+                  }`
+                : `pointer-events-none ${
+                    wall.structural ? 'stroke-[#7c2d12]' : 'stroke-[#111827]'
+                  } ${wall.id === $editor.selectedWallId ? 'stroke-[7]' : 'stroke-[5]'}`}
+              x1={wall.x1}
+              y1={wall.y1}
+              x2={wall.x2}
+              y2={wall.y2}
+            />
+            {#each wallOpenings(wall) as opening (opening.id)}
+              {@const position = openingPosition(wall, opening)}
+              <line
+                class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
+                x1={position.x1}
+                y1={position.y1}
+                x2={position.x2}
+                y2={position.y2}
+              />
+              <line
+                class="pointer-events-none stroke-[#0f766e] stroke-[2]"
+                x1={position.x1}
+                y1={position.y1}
+                x2={position.x2}
+                y2={position.y2}
+              />
+            {/each}
+          </g>
         {/each}
 
         <g class="pointer-events-none fill-none stroke-[#111827] stroke-[3]">
