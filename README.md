@@ -1,4 +1,4 @@
-# Renovation Floor Plan
+# Renoplan
 
 A SvelteKit prototype for simple, conceptual renovation planning.
 

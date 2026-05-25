@@ -12,7 +12,7 @@ import type {
 export const GRID_SIZE = 24;
 export const METRES_PER_GRID = 0.25;
 
-const STORAGE_KEY = 'renovation-floor-plan.editor.v1';
+const STORAGE_KEY = 'renoplan.editor.v1';
 const MIN_ROOM_SIZE = GRID_SIZE * 2;
 
 const initialPlan: PlanDocument = {

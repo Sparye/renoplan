@@ -247,7 +247,7 @@
 </script>
 
 <svelte:head>
-  <title>Renovation Floor Plan</title>
+  <title>Renoplan</title>
   <meta
     name="description"
     content="Conceptual renovation planner for creating and comparing room-based floor plans."
@@ -398,7 +398,7 @@
       class="flex min-h-16 items-center justify-between gap-4 border-b border-[#d8dee5] bg-white px-5 py-3.5"
     >
       <div class="grid gap-[3px]">
-        <strong>My Renovation Project</strong>
+        <strong>My Renoplan Project</strong>
         <span class="text-[0.88rem] text-[#6b7682]">Existing v1</span>
       </div>
       <div class="flex items-center gap-3.5">
