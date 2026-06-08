@@ -47,7 +47,7 @@ These items exist in the current repository and should be treated as completed f
 - Editor store exists at `src/lib/editor/editorStore.ts`.
 - Current editor state supports:
   - initial sample plan
-  - tray room templates
+  - inventory-based room setup options
   - localStorage persistence
   - room add from tray
   - room move
@@ -148,7 +148,7 @@ Scope:
   - Bedroom 1, Bedroom 2, etc.
   - suggested default dimensions per type
   - user-provided dimensions where known
-  - generated templates appear in the room tray or directly as arrangeable editor blocks for the local prototype
+  - generated rooms appear directly as arrangeable editor blocks for the local prototype
 - Track inventory item status:
   - unplaced
   - placed
@@ -160,7 +160,7 @@ Scope:
 
 Deliverables:
 
-- Inventory-driven room tray.
+- Inventory-driven room generation.
 - Baseline setup flow inside editor.
 - Room status state in the plan/setup model.
 

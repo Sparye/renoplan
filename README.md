@@ -6,7 +6,7 @@ The app helps homeowners assemble a rough existing single-level floor plan from 
 
 ## Current Features
 
-- Room tray for adding preset room blocks
+- Inventory wizard for generating existing room blocks
 - SVG floor plan canvas with grid snapping
 - Room selection and approximate metric dimensions
 - Dragging and resizing room blocks

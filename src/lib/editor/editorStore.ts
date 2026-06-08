@@ -8,7 +8,6 @@ import type {
   RoomType,
   SetupRoomKind,
   Room,
-  TrayRoomTemplate,
   Wall
 } from '$lib/domain/types';
 
@@ -80,8 +79,6 @@ export const roomSetupOptions: {
     height: 120
   }
 ];
-
-export const trayRoomTemplates: TrayRoomTemplate[] = [];
 
 export type SetupStep = 'counts' | 'measurements' | 'editor';
 
@@ -473,29 +470,6 @@ function createEditorStore() {
         selectedRoomId: null,
         selectedWallId: null
       }));
-    },
-    addRoom(template: TrayRoomTemplate, x: number, y: number) {
-      const roomId = createId(
-        template.label.toLowerCase().replaceAll(' ', '-')
-      );
-      mutatePlan(
-        (plan, state) => ({
-          ...plan,
-          rooms: [
-            ...plan.rooms,
-            {
-              id: roomId,
-              name: template.label,
-              type: template.type,
-              x: snapValue(x - template.width / 2, state.snapToGrid),
-              y: snapValue(y - template.height / 2, state.snapToGrid),
-              width: template.width,
-              height: template.height
-            }
-          ]
-        }),
-        { history: true, selectedRoomId: roomId, selectedWallId: null }
-      );
     },
     moveRoom(
       roomId: string,

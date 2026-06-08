@@ -40,6 +40,8 @@
         historyCaptured: boolean;
       }
     | null = null;
+  let suppressNextCanvasClick = false;
+  let suppressCanvasClickTimer: ReturnType<typeof setTimeout> | undefined;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
   let counts = Object.fromEntries(
@@ -192,11 +194,41 @@
   }
 
   function handleCanvasPointerUp(event: PointerEvent) {
+    if (interaction) {
+      suppressNextCanvasClick = true;
+      clearTimeout(suppressCanvasClickTimer);
+      suppressCanvasClickTimer = setTimeout(() => {
+        suppressNextCanvasClick = false;
+      }, 0);
+    }
+
     if (interaction && canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
 
     interaction = null;
+  }
+
+  function handleCanvasClick() {
+    if (suppressNextCanvasClick) {
+      suppressNextCanvasClick = false;
+      clearTimeout(suppressCanvasClickTimer);
+      return;
+    }
+
+    editor.selectRoom(null);
+  }
+
+  function handleRoomClick(event: MouseEvent) {
+    suppressNextCanvasClick = false;
+    clearTimeout(suppressCanvasClickTimer);
+    event.stopPropagation();
+  }
+
+  function handleWallClick(event: MouseEvent) {
+    suppressNextCanvasClick = false;
+    clearTimeout(suppressCanvasClickTimer);
+    event.stopPropagation();
   }
 
   function handleCanvasKeydown(event: KeyboardEvent) {
@@ -270,7 +302,10 @@
     ];
   }
 
-  onDestroy(() => clearTimeout(saveTimer));
+  onDestroy(() => {
+    clearTimeout(saveTimer);
+    clearTimeout(suppressCanvasClickTimer);
+  });
 </script>
 
 <svelte:head>
@@ -694,7 +729,7 @@
           on:pointermove={handleCanvasPointerMove}
           on:pointerup={handleCanvasPointerUp}
           on:pointerleave={handleCanvasPointerUp}
-          on:click={() => !interaction && editor.selectRoom(null)}
+          on:click={handleCanvasClick}
           on:keydown={handleCanvasKeydown}
         >
           <defs>
@@ -721,7 +756,7 @@
               tabindex="0"
               aria-label={`Select ${room.name}`}
               on:pointerdown={(event) => handleRoomPointerDown(event, room)}
-              on:click={(event) => event.stopPropagation()}
+              on:click={handleRoomClick}
               on:keydown={(event) => handleRoomKeydown(event, room.id)}
             >
               <rect
@@ -780,7 +815,7 @@
               tabindex="0"
               aria-label={`Select shared wall between ${wall.roomIds.join(' and ')}`}
               on:pointerdown={(event) => handleWallPointerDown(event, wall.id)}
-              on:click={(event) => event.stopPropagation()}
+              on:click={handleWallClick}
               on:keydown={(event) => handleWallKeydown(event, wall.id)}
             >
               <line

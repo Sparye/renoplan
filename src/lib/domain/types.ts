@@ -102,13 +102,6 @@ export interface Scenario {
   updatedAt: string;
 }
 
-export interface TrayRoomTemplate {
-  label: string;
-  type: RoomType;
-  width: number;
-  height: number;
-}
-
 export interface RoomInventoryItem {
   id: string;
   kind: SetupRoomKind;
