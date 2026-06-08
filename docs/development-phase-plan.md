@@ -1,6 +1,6 @@
 # Renoplan Development Phase Plan
 
-Last updated: 2026-05-25
+Last updated: 2026-06-08
 
 ## Product Direction
 
@@ -18,7 +18,7 @@ Build a desktop web app for homeowners who want to explore conceptual renovation
 - Units: metric only.
 - Plan model: rectangular room blocks only.
 - Grid: 0.25m conceptual increments, snap enabled by default and toggleable.
-- Existing plan setup: user enters room inventory, app generates room blocks into a left tray, user assembles them on the canvas, footprint is derived from assembled blocks, then user locks the baseline.
+- Existing plan setup: first-time users start in a guided setup flow, enter room inventory counts, optionally provide room-by-room measurements, then the app generates room blocks for the editor; footprint is derived from assembled blocks, then user locks the baseline.
 - Baseline editing: unlocking creates a new baseline version; existing scenarios stay attached to the old baseline.
 - Scenario model: scenarios start as full copies of a baseline.
 - Scenario edits: move shared walls, split rooms, open/remove walls, add/remove doors/openings, move objects, and rename room uses while keeping exterior footprint locked.
@@ -61,8 +61,11 @@ These items exist in the current repository and should be treated as completed f
   - undo/redo stacks
   - simulated saved/saving status
 - Main page exists at `src/routes/+page.svelte` with:
-  - left room tray
-  - setup checklist
+  - wizard-first room setup flow
+  - room count entry for bedroom, toilet, bathroom, kitchen, living, dining, laundry, storage, garage, and other rooms
+  - optional room-by-room measurement entry before the editor opens
+  - generated room blocks in the editor from setup inventory
+  - setup summary
   - selected room panel
   - selected wall panel
   - undo/redo buttons
@@ -80,8 +83,9 @@ These items exist in the current repository and should be treated as completed f
 - Supabase credentials/schema/RLS are not configured.
 - Editor data is localStorage-only.
 - There is no project/baseline/scenario route structure yet.
-- Room inventory entry is not implemented; tray templates are static.
+- Room inventory entry has an initial local wizard implementation, but the setup model is not yet persisted as first-class project metadata.
 - Placed tray blocks are not tracked against an inventory source of truth.
+- Generated room blocks currently appear directly on the canvas rather than as unplaced tray items.
 - Footprint derivation is not implemented as a first-class model.
 - Baseline lock/unlock and baseline versioning are not implemented.
 - Scenario creation, grouping, and side-by-side comparison are not implemented.
@@ -128,18 +132,23 @@ Exit criteria:
 
 ## Phase 1: Existing Plan Setup From Inventory
 
-Goal: replace static tray templates with the real baseline setup flow.
+Goal: replace the overloaded editor-first start with the real baseline setup flow.
 
 Scope:
 
-- Add an initial project setup route or state:
-  - project name
-  - room inventory counts
-  - room types: bedroom, toilet, bathroom, kitchen, living, dining, laundry, storage, garage, generic
+- Keep the app wizard-first for new local projects:
+  - step 1: room inventory counts
+  - step 2: room-by-room labels and optional dimensions
+  - step 3: generated blocks open in the editor
+- Preserve toilet and bathroom as separate user-facing setup categories, even if both map to the current `wet` room rendering type.
+- Allow measurements to be skipped by keeping suggested sizes.
+- Add project name when project/dashboard routing exists.
+- Room types: bedroom, toilet, bathroom, kitchen, living, dining, laundry, storage, garage, other.
 - Generate room blocks from inventory:
   - Bedroom 1, Bedroom 2, etc.
-  - sensible default dimensions per type
-  - generated templates appear in the room tray
+  - suggested default dimensions per type
+  - user-provided dimensions where known
+  - generated templates appear in the room tray or directly as arrangeable editor blocks for the local prototype
 - Track inventory item status:
   - unplaced
   - placed

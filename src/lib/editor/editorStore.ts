@@ -4,6 +4,9 @@ import type {
   Opening,
   PlanDocument,
   PlanRect,
+  RoomInventoryItem,
+  RoomType,
+  SetupRoomKind,
   Room,
   TrayRoomTemplate,
   Wall
@@ -15,59 +18,77 @@ export const METRES_PER_GRID = 0.25;
 const STORAGE_KEY = 'renoplan.editor.v1';
 const MIN_ROOM_SIZE = GRID_SIZE * 2;
 
-const initialPlan: PlanDocument = {
+const emptyPlan: PlanDocument = {
   id: 'existing-v1-plan',
-  rooms: [
-    {
-      id: 'bedroom-1',
-      name: 'Bedroom 1',
-      type: 'bedroom',
-      x: 320,
-      y: 96,
-      width: 168,
-      height: 144
-    },
-    {
-      id: 'kitchen',
-      name: 'Kitchen',
-      type: 'kitchen',
-      x: 488,
-      y: 96,
-      width: 168,
-      height: 144
-    },
-    {
-      id: 'living',
-      name: 'Living Room',
-      type: 'living',
-      x: 320,
-      y: 240,
-      width: 336,
-      height: 192
-    },
-    {
-      id: 'toilet',
-      name: 'Toilet',
-      type: 'wet',
-      x: 656,
-      y: 96,
-      width: 96,
-      height: 96
-    }
-  ],
+  rooms: [],
   walls: [],
   openings: [],
   objects: []
 };
 
-export const trayRoomTemplates: TrayRoomTemplate[] = [
-  { label: 'Bedroom 2', type: 'bedroom', width: 168, height: 144 },
-  { label: 'Bedroom 3', type: 'bedroom', width: 144, height: 144 },
-  { label: 'Laundry', type: 'utility', width: 120, height: 96 }
+export const roomSetupOptions: {
+  kind: SetupRoomKind;
+  label: string;
+  type: RoomType;
+  width: number;
+  height: number;
+}[] = [
+  {
+    kind: 'bedroom',
+    label: 'Bedroom',
+    type: 'bedroom',
+    width: 144,
+    height: 144
+  },
+  { kind: 'toilet', label: 'Toilet', type: 'wet', width: 72, height: 96 },
+  { kind: 'bathroom', label: 'Bathroom', type: 'wet', width: 120, height: 96 },
+  {
+    kind: 'kitchen',
+    label: 'Kitchen',
+    type: 'kitchen',
+    width: 168,
+    height: 144
+  },
+  {
+    kind: 'living',
+    label: 'Living room',
+    type: 'living',
+    width: 240,
+    height: 168
+  },
+  {
+    kind: 'dining',
+    label: 'Dining room',
+    type: 'living',
+    width: 168,
+    height: 144
+  },
+  {
+    kind: 'laundry',
+    label: 'Laundry',
+    type: 'utility',
+    width: 120,
+    height: 96
+  },
+  { kind: 'storage', label: 'Storage', type: 'utility', width: 96, height: 96 },
+  { kind: 'garage', label: 'Garage', type: 'generic', width: 240, height: 240 },
+  {
+    kind: 'other',
+    label: 'Other room',
+    type: 'generic',
+    width: 144,
+    height: 120
+  }
 ];
+
+export const trayRoomTemplates: TrayRoomTemplate[] = [];
+
+export type SetupStep = 'counts' | 'measurements' | 'editor';
 
 export interface EditorState {
   plan: PlanDocument;
+  setupStep: SetupStep;
+  inventory: RoomInventoryItem[];
   selectedRoomId: string | null;
   selectedWallId: string | null;
   snapToGrid: boolean;
@@ -115,6 +136,72 @@ export const snapValue = (value: number, enabled = true) =>
 
 export const pixelsToMetres = (value: number) =>
   (value / GRID_SIZE) * METRES_PER_GRID;
+
+export const metresToPixels = (value: number) =>
+  Math.max(MIN_ROOM_SIZE, Math.round(value / METRES_PER_GRID) * GRID_SIZE);
+
+const setupOptionFor = (kind: SetupRoomKind) =>
+  roomSetupOptions.find((option) => option.kind === kind) ??
+  roomSetupOptions[0];
+
+function roomLabel(kind: SetupRoomKind, index: number, count: number) {
+  const option = setupOptionFor(kind);
+  return count > 1 ? `${option.label} ${index + 1}` : option.label;
+}
+
+function inventoryFromCounts(counts: Record<SetupRoomKind, number>) {
+  return roomSetupOptions.flatMap((option) => {
+    const count = Math.max(0, Math.floor(counts[option.kind] ?? 0));
+
+    return Array.from({ length: count }, (_, index) => ({
+      id: `${option.kind}-${index + 1}`,
+      kind: option.kind,
+      label: roomLabel(option.kind, index, count),
+      type: option.type,
+      width: option.width,
+      height: option.height,
+      measured: false
+    }));
+  });
+}
+
+function planFromInventory(inventory: RoomInventoryItem[]): PlanDocument {
+  const margin = GRID_SIZE * 2;
+  const gap = GRID_SIZE;
+  const maxWidth = 840;
+
+  let x = margin;
+  let y = margin;
+  let rowHeight = 0;
+
+  const rooms = inventory.map((item) => {
+    if (x + item.width > maxWidth) {
+      x = margin;
+      y += rowHeight + gap;
+      rowHeight = 0;
+    }
+
+    const room: Room = {
+      id: item.id,
+      name: item.label,
+      type: item.type,
+      x,
+      y,
+      width: item.width,
+      height: item.height
+    };
+
+    x += item.width + gap;
+    rowHeight = Math.max(rowHeight, item.height);
+
+    return room;
+  });
+
+  return normalisePlan({
+    ...emptyPlan,
+    rooms
+  });
+}
 
 export function deriveSharedWalls(plan: PlanDocument): Wall[] {
   const previousWalls = new Map(plan.walls.map((wall) => [wall.id, wall]));
@@ -267,16 +354,16 @@ function resizeRect(
 }
 
 function loadPlan() {
-  if (!browser) return normalisePlan(initialPlan);
+  if (!browser) return normalisePlan(emptyPlan);
 
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return normalisePlan(initialPlan);
+  if (!raw) return normalisePlan(emptyPlan);
 
   try {
     const parsed = JSON.parse(raw) as PlanDocument;
     return normalisePlan(parsed);
   } catch {
-    return normalisePlan(initialPlan);
+    return normalisePlan(emptyPlan);
   }
 }
 
@@ -288,9 +375,12 @@ function persistPlan(plan: PlanDocument) {
 export type ResizeHandle = 'n' | 'e' | 's' | 'w' | 'ne' | 'se' | 'sw' | 'nw';
 
 function createEditorStore() {
+  const startingPlan = loadPlan();
   const store = writable<EditorState>({
-    plan: loadPlan(),
-    selectedRoomId: 'living',
+    plan: startingPlan,
+    setupStep: startingPlan.rooms.length > 0 ? 'editor' : 'counts',
+    inventory: [],
+    selectedRoomId: null,
     selectedWallId: null,
     snapToGrid: true,
     saveState: 'saved',
@@ -327,6 +417,63 @@ function createEditorStore() {
 
   return {
     subscribe: store.subscribe,
+    createInventory(counts: Record<SetupRoomKind, number>) {
+      const inventory = inventoryFromCounts(counts);
+
+      store.update((state) => ({
+        ...state,
+        inventory,
+        setupStep: inventory.length > 0 ? 'measurements' : 'counts',
+        saveState: 'saved'
+      }));
+    },
+    returnToCounts() {
+      store.update((state) => ({
+        ...state,
+        setupStep: 'counts',
+        selectedRoomId: null,
+        selectedWallId: null
+      }));
+    },
+    updateInventoryRoom(
+      roomId: string,
+      patch: Pick<
+        Partial<RoomInventoryItem>,
+        'label' | 'width' | 'height' | 'measured'
+      >
+    ) {
+      store.update((state) => ({
+        ...state,
+        inventory: state.inventory.map((item) =>
+          item.id === roomId ? { ...item, ...patch } : item
+        )
+      }));
+    },
+    startEditorFromInventory() {
+      store.update((state) => {
+        const plan = planFromInventory(state.inventory);
+        persistPlan(plan);
+
+        return {
+          ...state,
+          plan,
+          setupStep: 'editor',
+          selectedRoomId: plan.rooms[0]?.id ?? null,
+          selectedWallId: null,
+          past: [],
+          future: [],
+          saveState: 'saving'
+        };
+      });
+    },
+    returnToSetup() {
+      store.update((state) => ({
+        ...state,
+        setupStep: state.inventory.length > 0 ? 'measurements' : 'counts',
+        selectedRoomId: null,
+        selectedWallId: null
+      }));
+    },
     addRoom(template: TrayRoomTemplate, x: number, y: number) {
       const roomId = createId(
         template.label.toLowerCase().replaceAll(' ', '-')
@@ -502,11 +649,13 @@ function createEditorStore() {
       store.update((state) => ({ ...state, saveState: 'saved' }));
     },
     resetLocalPlan() {
-      const plan = normalisePlan(initialPlan);
+      const plan = normalisePlan(emptyPlan);
       persistPlan(plan);
       store.set({
         plan,
-        selectedRoomId: 'living',
+        setupStep: 'counts',
+        inventory: [],
+        selectedRoomId: null,
         selectedWallId: null,
         snapToGrid: true,
         saveState: 'saving',

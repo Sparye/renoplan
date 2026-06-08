@@ -6,6 +6,18 @@ export type RoomType =
   | 'utility'
   | 'generic';
 
+export type SetupRoomKind =
+  | 'bedroom'
+  | 'toilet'
+  | 'bathroom'
+  | 'kitchen'
+  | 'living'
+  | 'dining'
+  | 'laundry'
+  | 'storage'
+  | 'garage'
+  | 'other';
+
 export type WallKind = 'shared' | 'exterior';
 
 export type OpeningKind = 'door' | 'sliding-door' | 'opening' | 'window';
@@ -95,4 +107,14 @@ export interface TrayRoomTemplate {
   type: RoomType;
   width: number;
   height: number;
+}
+
+export interface RoomInventoryItem {
+  id: string;
+  kind: SetupRoomKind;
+  label: string;
+  type: RoomType;
+  width: number;
+  height: number;
+  measured: boolean;
 }
