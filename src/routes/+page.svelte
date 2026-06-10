@@ -8,6 +8,7 @@
     Plus,
     Redo2,
     RotateCcw,
+    Trash2,
     Undo2,
     Unlock
   } from '@lucide/svelte';
@@ -18,12 +19,19 @@
     metresToPixels,
     pixelsToMetres,
     roomSetupOptions,
+    selectedProposedRoom,
     selectedRoom,
-    selectedWall,
-    snapValue
+    selectedWall
   } from '$lib/editor/editorStore';
   import type { ResizeHandle } from '$lib/editor/editorStore';
-  import type { Opening, Room, SetupRoomKind, Wall } from '$lib/domain/types';
+  import type {
+    Opening,
+    PlanRect,
+    ProposedRoom,
+    Room,
+    SetupRoomKind,
+    Wall
+  } from '$lib/domain/types';
 
   const CANVAS_WIDTH = 960;
   const CANVAS_HEIGHT = 620;
@@ -32,6 +40,7 @@
   let interaction:
     | {
         mode: 'move';
+        target: 'room' | 'proposed-room';
         roomId: string;
         offsetX: number;
         offsetY: number;
@@ -39,18 +48,13 @@
       }
     | {
         mode: 'resize';
+        target: 'room' | 'proposed-room';
         roomId: string;
         handle: ResizeHandle;
         historyCaptured: boolean;
       }
     | null = null;
-  let addWallMode = false;
-  let wallDraft: {
-    x1: number;
-    y1: number;
-    x2: number;
-    y2: number;
-  } | null = null;
+  let addRoomMenuOpen = false;
   let suppressNextCanvasClick = false;
   let suppressCanvasClickTimer: ReturnType<typeof setTimeout> | undefined;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -166,14 +170,37 @@
   function handleRoomPointerDown(event: PointerEvent, room: Room) {
     event.stopPropagation();
     wallMenu = null;
-    addWallMode = false;
-    wallDraft = null;
+    addRoomMenuOpen = false;
     editor.selectRoom(room.id);
     if (!canEditGeometry) return;
 
     const point = getCanvasPoint(event);
     interaction = {
       mode: 'move',
+      target: 'room',
+      roomId: room.id,
+      offsetX: point.x - room.x,
+      offsetY: point.y - room.y,
+      historyCaptured: false
+    };
+
+    canvas.setPointerCapture(event.pointerId);
+  }
+
+  function handleProposedRoomPointerDown(
+    event: PointerEvent,
+    room: ProposedRoom
+  ) {
+    event.stopPropagation();
+    wallMenu = null;
+    addRoomMenuOpen = false;
+    editor.selectProposedRoom(room.id);
+    if (!isScenarioMode) return;
+
+    const point = getCanvasPoint(event);
+    interaction = {
+      mode: 'move',
+      target: 'proposed-room',
       roomId: room.id,
       offsetX: point.x - room.x,
       offsetY: point.y - room.y,
@@ -186,27 +213,32 @@
   function handleResizePointerDown(
     event: PointerEvent,
     roomId: string,
-    handle: ResizeHandle
+    handle: ResizeHandle,
+    target: 'room' | 'proposed-room' = 'room'
   ) {
     event.stopPropagation();
-    addWallMode = false;
-    wallDraft = null;
-    if (!canEditGeometry) return;
+    addRoomMenuOpen = false;
+    if (target === 'room' && !canEditGeometry) return;
+    if (target === 'proposed-room' && !isScenarioMode) return;
 
     interaction = {
       mode: 'resize',
+      target,
       roomId,
       handle,
       historyCaptured: false
     };
-    editor.selectRoom(roomId);
+    if (target === 'proposed-room') {
+      editor.selectProposedRoom(roomId);
+    } else {
+      editor.selectRoom(roomId);
+    }
     canvas.setPointerCapture(event.pointerId);
   }
 
   function handleWallPointerDown(event: PointerEvent, wallId: string) {
     event.stopPropagation();
-    addWallMode = false;
-    wallDraft = null;
+    addRoomMenuOpen = false;
     const wall = $editor.plan.walls.find(
       (candidate) => candidate.id === wallId
     );
@@ -221,53 +253,54 @@
   }
 
   function handleCanvasPointerDown(event: PointerEvent) {
-    if (!addWallMode || !canEditWalls) return;
-
-    const point = getCanvasPoint(event);
-    const x = snapValue(point.x, $editor.snapToGrid);
-    const y = snapValue(point.y, $editor.snapToGrid);
-    wallMenu = null;
-    editor.selectWall(null);
-    wallDraft = { x1: x, y1: y, x2: x, y2: y };
-    canvas.setPointerCapture(event.pointerId);
+    if (event.target === canvas) {
+      wallMenu = null;
+      addRoomMenuOpen = false;
+    }
   }
 
   function handleCanvasPointerMove(event: PointerEvent) {
-    if (!interaction && !wallDraft) return;
+    if (!interaction) return;
 
     const point = getCanvasPoint(event);
-
-    if (wallDraft) {
-      wallDraft = {
-        ...wallDraft,
-        x2: snapValue(point.x, $editor.snapToGrid),
-        y2: snapValue(point.y, $editor.snapToGrid)
-      };
-      return;
-    }
 
     const currentInteraction = interaction;
     if (!currentInteraction) return;
 
     if (currentInteraction.mode === 'move') {
-      editor.moveRoom(
-        currentInteraction.roomId,
-        point.x - currentInteraction.offsetX,
-        point.y - currentInteraction.offsetY,
-        {
+      const x = point.x - currentInteraction.offsetX;
+      const y = point.y - currentInteraction.offsetY;
+      if (currentInteraction.target === 'proposed-room') {
+        editor.moveProposedRoom(currentInteraction.roomId, x, y, {
           history: !currentInteraction.historyCaptured
-        }
-      );
+        });
+      } else {
+        editor.moveRoom(currentInteraction.roomId, x, y, {
+          history: !currentInteraction.historyCaptured
+        });
+      }
     } else {
-      editor.resizeRoom(
-        currentInteraction.roomId,
-        currentInteraction.handle,
-        point.x,
-        point.y,
-        {
-          history: !currentInteraction.historyCaptured
-        }
-      );
+      if (currentInteraction.target === 'proposed-room') {
+        editor.resizeProposedRoom(
+          currentInteraction.roomId,
+          currentInteraction.handle,
+          point.x,
+          point.y,
+          {
+            history: !currentInteraction.historyCaptured
+          }
+        );
+      } else {
+        editor.resizeRoom(
+          currentInteraction.roomId,
+          currentInteraction.handle,
+          point.x,
+          point.y,
+          {
+            history: !currentInteraction.historyCaptured
+          }
+        );
+      }
     }
 
     currentInteraction.historyCaptured = true;
@@ -275,23 +308,6 @@
   }
 
   function handleCanvasPointerUp(event: PointerEvent) {
-    if (wallDraft) {
-      editor.addCustomWall(
-        wallDraft.x1,
-        wallDraft.y1,
-        wallDraft.x2,
-        wallDraft.y2
-      );
-      wallDraft = null;
-      addWallMode = false;
-      suppressNextCanvasClick = true;
-      clearTimeout(suppressCanvasClickTimer);
-      suppressCanvasClickTimer = setTimeout(() => {
-        suppressNextCanvasClick = false;
-      }, 0);
-      scheduleSaved();
-    }
-
     if (interaction) {
       suppressNextCanvasClick = true;
       clearTimeout(suppressCanvasClickTimer);
@@ -315,9 +331,9 @@
     }
 
     wallMenu = null;
-    addWallMode = false;
-    wallDraft = null;
+    addRoomMenuOpen = false;
     editor.selectRoom(null);
+    editor.selectProposedRoom(null);
   }
 
   function handleRoomClick(event: MouseEvent) {
@@ -335,9 +351,9 @@
   function handleCanvasKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       wallMenu = null;
-      addWallMode = false;
-      wallDraft = null;
+      addRoomMenuOpen = false;
       editor.selectRoom(null);
+      editor.selectProposedRoom(null);
     }
   }
 
@@ -345,9 +361,17 @@
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       wallMenu = null;
-      addWallMode = false;
-      wallDraft = null;
+      addRoomMenuOpen = false;
       editor.selectRoom(roomId);
+    }
+  }
+
+  function handleProposedRoomKeydown(event: KeyboardEvent, roomId: string) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      wallMenu = null;
+      addRoomMenuOpen = false;
+      editor.selectProposedRoom(roomId);
     }
   }
 
@@ -355,8 +379,7 @@
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       wallMenu = null;
-      addWallMode = false;
-      wallDraft = null;
+      addRoomMenuOpen = false;
       editor.selectWall(wallId);
     }
   }
@@ -419,7 +442,7 @@
   }
 
   function resizeHandles(
-    room: Room
+    room: PlanRect
   ): { handle: ResizeHandle; x: number; y: number }[] {
     const midX = room.x + room.width / 2;
     const midY = room.y + room.height / 2;
@@ -751,6 +774,85 @@
         </section>
       {/if}
 
+      {#if $selectedProposedRoom}
+        <section class="grid gap-3" aria-live="polite">
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">
+              Proposed room
+            </h2>
+            <span
+              class="rounded-sm bg-[#e8f3f1] px-2 py-1 text-[0.72rem] font-bold text-[#0f766e] uppercase"
+            >
+              Overlay
+            </span>
+          </div>
+          <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+            Name
+            <input
+              class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+              value={$selectedProposedRoom.name}
+              oninput={(event) => {
+                editor.updateProposedRoom($selectedProposedRoom.id, {
+                  name: event.currentTarget.value
+                });
+                scheduleSaved();
+              }}
+            />
+          </label>
+          <div class="grid min-w-0 grid-cols-2 gap-2">
+            <label class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]">
+              Width m
+              <input
+                class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                inputmode="decimal"
+                min="0.5"
+                step="0.25"
+                type="number"
+                value={pixelsToMetres($selectedProposedRoom.width).toFixed(2)}
+                oninput={(event) => {
+                  const value = pixelsFromMetres(event.currentTarget.value);
+                  if (value === null) return;
+                  editor.updateProposedRoom($selectedProposedRoom.id, {
+                    width: value
+                  });
+                  scheduleSaved();
+                }}
+              />
+            </label>
+            <label class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]">
+              Depth m
+              <input
+                class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                inputmode="decimal"
+                min="0.5"
+                step="0.25"
+                type="number"
+                value={pixelsToMetres($selectedProposedRoom.height).toFixed(2)}
+                oninput={(event) => {
+                  const value = pixelsFromMetres(event.currentTarget.value);
+                  if (value === null) return;
+                  editor.updateProposedRoom($selectedProposedRoom.id, {
+                    height: value
+                  });
+                  scheduleSaved();
+                }}
+              />
+            </label>
+          </div>
+          <button
+            class="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+            type="button"
+            onclick={() => {
+              editor.deleteProposedRoom($selectedProposedRoom.id);
+              scheduleSaved();
+            }}
+          >
+            <Trash2 size={16} />
+            Delete room
+          </button>
+        </section>
+      {/if}
+
       {#if $selectedWall}
         <section class="grid gap-3" aria-live="polite">
           <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">
@@ -957,24 +1059,48 @@
               Renovation plan
             </button>
           {/if}
-          {#if canEditWalls}
-            <button
-              class={`inline-flex min-h-9 items-center gap-2 rounded-md px-3 text-sm font-bold ${
-                addWallMode
-                  ? 'bg-[#17202a] text-white'
-                  : 'border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a]'
-              }`}
-              type="button"
-              aria-pressed={addWallMode}
-              onclick={() => {
-                wallMenu = null;
-                wallDraft = null;
-                addWallMode = !addWallMode;
-              }}
-            >
-              <Plus size={16} />
-              Add wall
-            </button>
+          {#if isScenarioMode}
+            <div class="relative">
+              <button
+                class={`inline-flex min-h-9 items-center gap-2 rounded-md px-3 text-sm font-bold ${
+                  addRoomMenuOpen
+                    ? 'bg-[#17202a] text-white'
+                    : 'border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a]'
+                }`}
+                type="button"
+                aria-expanded={addRoomMenuOpen}
+                onclick={() => {
+                  wallMenu = null;
+                  editor.selectWall(null);
+                  addRoomMenuOpen = !addRoomMenuOpen;
+                }}
+              >
+                <Plus size={16} />
+                Add room
+              </button>
+              {#if addRoomMenuOpen}
+                <div
+                  class="absolute right-0 top-11 z-20 grid max-h-80 w-56 overflow-auto rounded-md border border-[#b8c4d1] bg-white p-1.5 shadow-lg"
+                  role="menu"
+                  aria-label="Add room"
+                >
+                  {#each roomSetupOptions as option (option.kind)}
+                    <button
+                      class="min-h-9 rounded-[4px] px-3 text-left text-sm font-bold text-[#17202a] hover:bg-[#eef2f6]"
+                      type="button"
+                      role="menuitem"
+                      onclick={() => {
+                        editor.addProposedRoom(option.kind);
+                        addRoomMenuOpen = false;
+                        scheduleSaved();
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
           {/if}
           <button
             class="grid size-9 place-items-center rounded-md border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a] disabled:cursor-not-allowed disabled:opacity-40"
@@ -1190,9 +1316,7 @@
                   data-testid={wall.id}
                   aria-label={wall.kind === 'shared'
                     ? `Select shared wall between ${wall.roomIds.join(' and ')}`
-                    : wall.kind === 'custom'
-                      ? 'Select custom wall'
-                      : `Select exterior wall of ${wall.roomIds[0]}`}
+                    : `Select exterior wall of ${wall.roomIds[0]}`}
                   onclick={(event) => {
                     event.stopPropagation();
                     editor.selectWall(wall.id);
@@ -1201,9 +1325,7 @@
                 >
                   <rect
                     class="cursor-default fill-black opacity-[0.01]"
-                    data-testid={wall.kind === 'custom'
-                      ? 'custom-wall-hitbox'
-                      : `${wall.id}-hitbox`}
+                    data-testid={`${wall.id}-hitbox`}
                     x={hitbox.x}
                     y={hitbox.y}
                     width={hitbox.width}
@@ -1374,9 +1496,7 @@
                   data-testid={wall.id}
                   aria-label={wall.kind === 'shared'
                     ? `Select shared wall between ${wall.roomIds.join(' and ')}`
-                    : wall.kind === 'custom'
-                      ? 'Select custom wall'
-                      : `Select exterior wall of ${wall.roomIds[0]}`}
+                    : `Select exterior wall of ${wall.roomIds[0]}`}
                   onpointerdown={(event) =>
                     handleWallPointerDown(event, wall.id)}
                   onclick={handleWallClick}
@@ -1384,9 +1504,7 @@
                 >
                   <rect
                     class="cursor-pointer fill-black opacity-[0.01]"
-                    data-testid={wall.kind === 'custom'
-                      ? 'custom-wall-hitbox'
-                      : `${wall.id}-hitbox`}
+                    data-testid={`${wall.id}-hitbox`}
                     x={hitbox.x}
                     y={hitbox.y}
                     width={hitbox.width}
@@ -1425,14 +1543,79 @@
                 </g>
               {/if}
             {/each}
-            {#if wallDraft}
-              <line
-                class="pointer-events-none stroke-[#0f766e] stroke-[4] [stroke-dasharray:8_6]"
-                x1={wallDraft.x1}
-                y1={wallDraft.y1}
-                x2={wallDraft.x2}
-                y2={wallDraft.y2}
-              />
+
+            {#if isScenarioMode}
+              {#each $editor.plan.proposedRooms as room (room.id)}
+                <g
+                  role="button"
+                  tabindex="0"
+                  data-testid={room.id}
+                  aria-label={`Select proposed ${room.name}`}
+                  onpointerdown={(event) =>
+                    handleProposedRoomPointerDown(event, room)}
+                  onclick={handleRoomClick}
+                  onkeydown={(event) =>
+                    handleProposedRoomKeydown(event, room.id)}
+                >
+                  <rect
+                    class={`cursor-move ${roomFillClasses[room.type]} opacity-70 ${
+                      room.id === $editor.selectedProposedRoomId
+                        ? 'stroke-[#0f766e] stroke-[4]'
+                        : 'stroke-[#0f766e] stroke-[3] [stroke-dasharray:9_7]'
+                    }`}
+                    x={room.x}
+                    y={room.y}
+                    width={room.width}
+                    height={room.height}
+                    rx="2"
+                    vector-effect="non-scaling-stroke"
+                  />
+                  <text
+                    class="pointer-events-none select-none fill-[#0f3f3a] text-base font-bold"
+                    x={room.x + 14}
+                    y={room.y + 28}
+                  >
+                    {room.name}
+                  </text>
+                  <text
+                    class="pointer-events-none select-none fill-[#0f766e] text-[12px] font-bold uppercase"
+                    x={room.x + 14}
+                    y={room.y + 46}
+                  >
+                    Proposed
+                  </text>
+                  {#if room.id === $editor.selectedProposedRoomId}
+                    <text
+                      class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
+                      x={room.x + 14}
+                      y={room.y + room.height - 16}
+                    >
+                      {pixelsToMetres(room.width).toFixed(2)}m x {pixelsToMetres(
+                        room.height
+                      ).toFixed(2)}m
+                    </text>
+                    {#each resizeHandles(room) as item (item.handle)}
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <rect
+                        class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
+                        x={item.x - 5}
+                        y={item.y - 5}
+                        width="10"
+                        height="10"
+                        rx="2"
+                        vector-effect="non-scaling-stroke"
+                        onpointerdown={(event) =>
+                          handleResizePointerDown(
+                            event,
+                            room.id,
+                            item.handle,
+                            'proposed-room'
+                          )}
+                      />
+                    {/each}
+                  {/if}
+                </g>
+              {/each}
             {/if}
           </svg>
         {/if}

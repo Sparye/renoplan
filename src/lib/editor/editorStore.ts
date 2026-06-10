@@ -4,6 +4,7 @@ import type {
   Opening,
   PlanDocument,
   PlanRect,
+  ProposedRoom,
   Room,
   RoomInventoryItem,
   RoomType,
@@ -53,6 +54,7 @@ export interface EditorStorage {
 const emptyPlan: PlanDocument = {
   id: 'existing-v1-plan',
   rooms: [],
+  proposedRooms: [],
   walls: [],
   openings: [],
   objects: []
@@ -120,6 +122,7 @@ export interface EditorState extends EditorEnvelope {
   setupStep: SetupStep;
   inventory: RoomInventoryItem[];
   selectedRoomId: string | null;
+  selectedProposedRoomId: string | null;
   selectedWallId: string | null;
   snapToGrid: boolean;
   saveState: 'saved' | 'saving' | 'offline';
@@ -143,6 +146,7 @@ const createRuntimeId = (prefix: string) =>
 export const clonePlan = (plan: PlanDocument): PlanDocument => ({
   ...plan,
   rooms: plan.rooms.map((room) => ({ ...room })),
+  proposedRooms: (plan.proposedRooms ?? []).map((room) => ({ ...room })),
   walls: plan.walls.map((wall) => ({ ...wall, roomIds: [...wall.roomIds] })),
   openings: plan.openings.map((opening) => ({ ...opening })),
   objects: plan.objects.map((object) => ({ ...object }))
@@ -259,6 +263,13 @@ function planFromInventory(inventory: RoomInventoryItem[]): PlanDocument {
   });
 }
 
+function proposedRoomLabel(plan: PlanDocument, kind: SetupRoomKind) {
+  const option = setupOptionFor(kind);
+  const count =
+    plan.proposedRooms.filter((room) => room.type === option.type).length + 1;
+  return `${option.label} ${count}`;
+}
+
 export function derivePlanBounds(plan: PlanDocument): PlanBounds | null {
   if (plan.rooms.length === 0) return null;
 
@@ -361,7 +372,6 @@ function subtractSegments(
 export function deriveWalls(plan: PlanDocument): Wall[] {
   const previousWalls = new Map(plan.walls.map((wall) => [wall.id, wall]));
   const sharedWalls = deriveSharedWalls(plan);
-  const customWalls = plan.walls.filter((wall) => wall.kind === 'custom');
   const exteriorWalls: Wall[] = [];
 
   for (const room of plan.rooms) {
@@ -468,7 +478,7 @@ export function deriveWalls(plan: PlanDocument): Wall[] {
     }
   }
 
-  return [...sharedWalls, ...exteriorWalls, ...customWalls];
+  return [...sharedWalls, ...exteriorWalls];
 }
 
 function normalisePlan(plan: PlanDocument): PlanDocument {
@@ -523,6 +533,13 @@ function isPlanDocument(value: unknown): value is PlanDocument {
   );
 }
 
+function ensurePlanDocument(value: PlanDocument): PlanDocument {
+  return {
+    ...value,
+    proposedRooms: value.proposedRooms ?? []
+  };
+}
+
 function isEditorEnvelope(value: unknown): value is EditorEnvelope {
   return (
     typeof value === 'object' &&
@@ -535,7 +552,7 @@ function isEditorEnvelope(value: unknown): value is EditorEnvelope {
 export function createEnvelopeFromPlan(plan: PlanDocument): EditorEnvelope {
   return {
     version: ENVELOPE_VERSION,
-    baselinePlan: normalisePlan(plan),
+    baselinePlan: normalisePlan(ensurePlanDocument(plan)),
     lockedBaseline: null,
     scenarioPlan: null,
     activeMode: 'baseline'
@@ -638,20 +655,8 @@ function clampRectToBounds(rect: PlanRect, bounds: PlanBounds | null) {
   };
 }
 
-function clampPointToBounds(
-  point: { x: number; y: number },
-  bounds: PlanBounds | null
-) {
-  if (!bounds) return point;
-
-  return {
-    x: Math.min(Math.max(point.x, bounds.x), bounds.x + bounds.width),
-    y: Math.min(Math.max(point.y, bounds.y), bounds.y + bounds.height)
-  };
-}
-
 function resizeRect(
-  room: Room,
+  room: PlanRect,
   handle: ResizeHandle,
   x: number,
   y: number
@@ -737,6 +742,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         startingEnvelope.baselinePlan.rooms.length > 0 ? 'editor' : 'counts',
       inventory: [],
       selectedRoomId: null,
+      selectedProposedRoomId: null,
       selectedWallId: null,
       snapToGrid: true,
       saveState: 'saved',
@@ -760,6 +766,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
     options: {
       history?: boolean;
       selectedRoomId?: string | null;
+      selectedProposedRoomId?: string | null;
       selectedWallId?: string | null;
     } = {}
   ) {
@@ -783,6 +790,8 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
       }
 
       nextState.selectedRoomId = options.selectedRoomId ?? state.selectedRoomId;
+      nextState.selectedProposedRoomId =
+        options.selectedProposedRoomId ?? state.selectedProposedRoomId;
       nextState.selectedWallId = options.selectedWallId ?? state.selectedWallId;
       saveState(nextState);
 
@@ -813,6 +822,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
           ...state,
           setupStep: 'counts',
           selectedRoomId: null,
+          selectedProposedRoomId: null,
           selectedWallId: null
         };
       });
@@ -846,6 +856,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
           activeMode: 'baseline' as const,
           setupStep: 'editor' as const,
           selectedRoomId: plan.rooms[0]?.id ?? null,
+          selectedProposedRoomId: null,
           selectedWallId: null,
           baselinePast: [],
           baselineFuture: [],
@@ -863,6 +874,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
           ...state,
           setupStep: state.inventory.length > 0 ? 'measurements' : 'counts',
           selectedRoomId: null,
+          selectedProposedRoomId: null,
           selectedWallId: null
         };
       });
@@ -893,6 +905,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
             plan: clonePlan(plan)
           },
           selectedRoomId: null,
+          selectedProposedRoomId: null,
           selectedWallId: null,
           saveState: 'saving' as const
         };
@@ -911,6 +924,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
           lockedBaseline: null,
           activeMode: 'baseline' as const,
           selectedRoomId: null,
+          selectedProposedRoomId: null,
           selectedWallId: null,
           baselinePast: [],
           baselineFuture: [],
@@ -933,6 +947,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
           scenarioPlan: normalisePlan(plan),
           activeMode: 'scenario' as const,
           selectedRoomId: null,
+          selectedProposedRoomId: null,
           selectedWallId: null,
           scenarioPast: [],
           scenarioFuture: [],
@@ -950,6 +965,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
           ...state,
           activeMode: mode,
           selectedRoomId: null,
+          selectedProposedRoomId: null,
           selectedWallId: null
         };
         saveState(nextState);
@@ -992,6 +1008,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         {
           history: options.history,
           selectedRoomId: roomId,
+          selectedProposedRoomId: null,
           selectedWallId: null
         }
       );
@@ -1034,6 +1051,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         {
           history: options.history,
           selectedRoomId: roomId,
+          selectedProposedRoomId: null,
           selectedWallId: null
         }
       );
@@ -1053,52 +1071,192 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
             )
           };
         },
-        { history: true, selectedRoomId: null, selectedWallId: wallId }
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: wallId
+        }
       );
     },
-    addCustomWall(x1: number, y1: number, x2: number, y2: number) {
+    addProposedRoom(kind: SetupRoomKind) {
+      const roomId = makeId('proposed-room');
       mutatePlan(
         (plan, state) => {
-          if (!canEditWalls(state)) return plan;
-          const bounds =
-            state.activeMode === 'scenario'
-              ? (state.lockedBaseline?.bounds ?? null)
-              : null;
-          const start = clampPointToBounds(
-            {
-              x: snapValue(x1, state.snapToGrid),
-              y: snapValue(y1, state.snapToGrid)
-            },
-            bounds
-          );
-          const end = clampPointToBounds(
-            {
-              x: snapValue(x2, state.snapToGrid),
-              y: snapValue(y2, state.snapToGrid)
-            },
-            bounds
-          );
+          if (state.activeMode !== 'scenario') return plan;
+          const bounds = state.lockedBaseline?.bounds;
+          if (!bounds) return plan;
 
-          const wall: Wall = {
-            id: makeId('wall'),
-            kind: 'custom',
-            roomIds: [],
-            x1: start.x,
-            y1: start.y,
-            x2: end.x,
-            y2: end.y,
-            structural: false,
-            removed: false
+          const option = setupOptionFor(kind);
+          const width = Math.min(option.width, bounds.width);
+          const height = Math.min(option.height, bounds.height);
+          const proposedRoom: ProposedRoom = {
+            id: roomId,
+            name: proposedRoomLabel(plan, kind),
+            type: option.type,
+            ...clampRectToBounds(
+              {
+                x: snapValue(bounds.x + (bounds.width - width) / 2),
+                y: snapValue(bounds.y + (bounds.height - height) / 2),
+                width,
+                height
+              },
+              bounds
+            )
           };
-
-          if (wallLength(wall) < GRID_SIZE) return plan;
 
           return {
             ...plan,
-            walls: [...plan.walls, wall]
+            proposedRooms: [...plan.proposedRooms, proposedRoom]
           };
         },
-        { history: true, selectedRoomId: null, selectedWallId: null }
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: roomId,
+          selectedWallId: null
+        }
+      );
+    },
+    moveProposedRoom(
+      roomId: string,
+      x: number,
+      y: number,
+      options: { history?: boolean } = {}
+    ) {
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+          const bounds = state.lockedBaseline?.bounds ?? null;
+
+          return {
+            ...plan,
+            proposedRooms: plan.proposedRooms.map((room) =>
+              room.id === roomId
+                ? {
+                    ...room,
+                    ...clampRectToBounds(
+                      {
+                        ...room,
+                        x: snapValue(x, state.snapToGrid),
+                        y: snapValue(y, state.snapToGrid)
+                      },
+                      bounds
+                    )
+                  }
+                : room
+            )
+          };
+        },
+        {
+          history: options.history,
+          selectedRoomId: null,
+          selectedProposedRoomId: roomId,
+          selectedWallId: null
+        }
+      );
+    },
+    resizeProposedRoom(
+      roomId: string,
+      handle: ResizeHandle,
+      x: number,
+      y: number,
+      options: { history?: boolean } = {}
+    ) {
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+          const bounds = state.lockedBaseline?.bounds ?? null;
+
+          return {
+            ...plan,
+            proposedRooms: plan.proposedRooms.map((room) =>
+              room.id === roomId
+                ? {
+                    ...room,
+                    ...clampRectToBounds(
+                      resizeRect(
+                        room,
+                        handle,
+                        snapValue(x, state.snapToGrid),
+                        snapValue(y, state.snapToGrid)
+                      ),
+                      bounds
+                    )
+                  }
+                : room
+            )
+          };
+        },
+        {
+          history: options.history,
+          selectedRoomId: null,
+          selectedProposedRoomId: roomId,
+          selectedWallId: null
+        }
+      );
+    },
+    updateProposedRoom(
+      roomId: string,
+      patch: Pick<Partial<ProposedRoom>, 'name' | 'width' | 'height'>
+    ) {
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+          const bounds = state.lockedBaseline?.bounds ?? null;
+
+          return {
+            ...plan,
+            proposedRooms: plan.proposedRooms.map((room) =>
+              room.id === roomId
+                ? {
+                    ...room,
+                    ...patch,
+                    ...clampRectToBounds(
+                      {
+                        ...room,
+                        width: Math.max(
+                          MIN_ROOM_SIZE,
+                          patch.width ?? room.width
+                        ),
+                        height: Math.max(
+                          MIN_ROOM_SIZE,
+                          patch.height ?? room.height
+                        )
+                      },
+                      bounds
+                    )
+                  }
+                : room
+            )
+          };
+        },
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: roomId,
+          selectedWallId: null
+        }
+      );
+    },
+    deleteProposedRoom(roomId: string) {
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+
+          return {
+            ...plan,
+            proposedRooms: plan.proposedRooms.filter(
+              (room) => room.id !== roomId
+            )
+          };
+        },
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: null
+        }
       );
     },
     addOpening(wallId: string, offset?: number) {
@@ -1125,7 +1283,12 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
             openings: [...plan.openings, opening]
           };
         },
-        { history: true, selectedRoomId: null, selectedWallId: wallId }
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: wallId
+        }
       );
     },
     updateOpening(
@@ -1163,13 +1326,26 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
             )
           };
         },
-        { history: true, selectedRoomId: null }
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: null
+        }
       );
     },
     selectRoom(roomId: string | null) {
       updateState((state) => ({
         ...state,
         selectedRoomId: roomId,
+        selectedProposedRoomId: null,
+        selectedWallId: null
+      }));
+    },
+    selectProposedRoom(roomId: string | null) {
+      updateState((state) => ({
+        ...state,
+        selectedRoomId: null,
+        selectedProposedRoomId: roomId,
         selectedWallId: null
       }));
     },
@@ -1177,6 +1353,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
       updateState((state) => ({
         ...state,
         selectedRoomId: null,
+        selectedProposedRoomId: null,
         selectedWallId: wallId
       }));
     },
@@ -1193,6 +1370,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         const nextState = {
           ...state,
           selectedRoomId: null,
+          selectedProposedRoomId: null,
           selectedWallId: null,
           saveState: 'saving' as const
         };
@@ -1227,6 +1405,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         const nextState = {
           ...state,
           selectedRoomId: null,
+          selectedProposedRoomId: null,
           selectedWallId: null,
           saveState: 'saving' as const
         };
@@ -1265,6 +1444,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
           setupStep: 'counts' as const,
           inventory: [],
           selectedRoomId: null,
+          selectedProposedRoomId: null,
           selectedWallId: null,
           snapToGrid: true,
           saveState: 'saving' as const,
@@ -1284,6 +1464,12 @@ export const editor = createEditorStore();
 
 export const selectedRoom = derived(editor, ($editor) =>
   $editor.plan.rooms.find((room) => room.id === $editor.selectedRoomId)
+);
+
+export const selectedProposedRoom = derived(editor, ($editor) =>
+  $editor.plan.proposedRooms.find(
+    (room) => room.id === $editor.selectedProposedRoomId
+  )
 );
 
 export const selectedWall = derived(editor, ($editor) =>

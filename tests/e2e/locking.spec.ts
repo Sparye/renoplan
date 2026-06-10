@@ -23,22 +23,6 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await page.getByLabel('Offset m').fill('0.50');
   await expect(page.getByLabel('Offset m')).toHaveValue('0.50');
 
-  const canvas = page.getByRole('application', { name: /Floor plan canvas/ });
-  const canvasBox = await canvas.boundingBox();
-  if (!canvasBox) throw new Error('Canvas was not rendered');
-
-  await page.getByRole('button', { name: 'Add wall' }).click();
-  await page.mouse.move(canvasBox.x + 560, canvasBox.y + 360);
-  await page.mouse.down();
-  await page.mouse.move(canvasBox.x + 720, canvasBox.y + 360);
-  await page.mouse.up();
-  await expect(page.getByTestId('custom-wall-hitbox')).toBeVisible();
-
-  await page.getByTestId('custom-wall-hitbox').click();
-  await expect(page.getByRole('menu', { name: 'Wall actions' })).toBeVisible();
-  await page.getByRole('menuitem', { name: 'Remove wall' }).click();
-  await expect(page.getByTestId('custom-wall-hitbox')).toHaveCount(0);
-
   await page.getByRole('button', { name: 'Lock baseline' }).click();
   await expect(page.getByText('Existing v1 · Locked baseline')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reset setup' })).toHaveCount(
@@ -70,6 +54,21 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
     page.getByText('Renovation plan · Editable renovation copy')
   ).toBeVisible();
   await expect(page.getByTestId('scenario-bounds')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add wall' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add room' }).click();
+  await page.getByRole('menuitem', { name: 'Bathroom' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Select proposed Bathroom 1' })
+  ).toBeVisible();
+  await expect(page.getByText('Proposed room')).toBeVisible();
+  await page.getByLabel('Name').fill('New ensuite');
+  await expect(
+    page.getByRole('button', { name: 'Select proposed New ensuite' })
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Delete room' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Select proposed New ensuite' })
+  ).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Existing' })).toBeVisible();
   await expect(
     page.getByRole('button', { name: 'Renovation', exact: true })
@@ -77,6 +76,7 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
 
   const scenarioBox = await bedroom.boundingBox();
   if (!scenarioBox) throw new Error('Scenario bedroom was not rendered');
+  const canvas = page.getByRole('application', { name: /Floor plan canvas/ });
   await bedroom.dragTo(canvas, {
     targetPosition: { x: 900, y: 500 }
   });

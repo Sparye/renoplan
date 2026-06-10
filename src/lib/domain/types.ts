@@ -18,7 +18,7 @@ export type SetupRoomKind =
   | 'garage'
   | 'other';
 
-export type WallKind = 'shared' | 'exterior' | 'custom';
+export type WallKind = 'shared' | 'exterior';
 
 export type OpeningKind = 'door' | 'sliding-door' | 'opening' | 'window';
 
@@ -51,6 +51,8 @@ export interface Room extends PlanRect {
   type: RoomType;
 }
 
+export type ProposedRoom = Room;
+
 export interface Wall {
   id: string;
   kind: WallKind;
@@ -81,6 +83,7 @@ export interface PlanObject extends PlanRect {
 export interface PlanDocument {
   id: string;
   rooms: Room[];
+  proposedRooms: ProposedRoom[];
   walls: Wall[];
   openings: Opening[];
   objects: PlanObject[];

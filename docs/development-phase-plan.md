@@ -20,14 +20,20 @@ Build a desktop web app for homeowners who want to explore conceptual renovation
 - Grid: 0.25m conceptual increments, snap enabled by default and toggleable.
 - Existing plan setup: first-time users start in a guided setup flow, enter room inventory counts, optionally provide room-by-room measurements, then the app generates room blocks for the editor; footprint is derived from assembled blocks, then user locks the baseline.
 - Baseline editing: unlocking creates a new baseline version; existing scenarios stay attached to the old baseline.
-- Scenario model: scenarios start as full copies of a baseline.
-- Scenario edits: move shared walls, split rooms, open/remove walls, add/remove doors/openings, move objects, and rename room uses while keeping exterior footprint locked.
-- New rooms: created only by splitting/relabeling existing space.
+- Scenario model: scenarios start with an empty proposed layout inside the selected baseline footprint; the locked baseline room rectangles are shown unlabeled by default as a toggleable, highly subdued, non-editable reference background.
+- Scenario footprint: the locked footprint boundary remains visible even when the reference background is hidden.
+- Reference background visibility is saved per scenario and defaults to visible for new scenarios.
+- Scenario edits: add, move, resize, split, relabel, and remove proposed rooms; add/remove doors/openings on proposed wall surfaces and move objects while keeping exterior footprint locked.
+- Scenario storage: editable scenario layouts use proposed rooms; baseline rooms are retained only as locked baseline data and optional reference background.
+- Scenario creation starts with manual proposed room addition; seed-from-baseline can be considered later as an explicit convenience that creates proposed rooms.
+- Existing local prototype scenarios that were created as full baseline copies can be reset during the model change; keep the baseline and let users create new empty proposed layouts.
+- New rooms: created as proposed rooms inside the locked footprint rather than by editing copied baseline rooms.
 - Wall model: shared walls can be marked structural, removed/restored, and given doors/openings.
 - Doors/openings: move and resize along wall.
 - Object library: kitchen appliances, bathroom fixtures, basic furniture, doors/openings/windows.
 - Object behavior: preset sizes, user-resizable, 90-degree rotation only.
-- Constraints: soft/passive warnings only; do not block edits.
+- Constraints: soft/passive warnings only except for normal scenario edits leaving the locked footprint, which are prevented.
+- Scenario collisions: proposed rooms may overlap reference background rooms, but cannot overlap other proposed rooms or leave the locked footprint; move/resize interactions clamp to the nearest valid position.
 - Validation: no required validation before locking baseline.
 - Undo/redo: editor actions use local browser history.
 - Save: debounced autosave plus immediate save for major actions.
@@ -237,16 +243,17 @@ Goal: support the core renovation actions inside a locked footprint.
 
 Scope:
 
-- Create scenario as full copy of selected baseline.
+- Create scenario with an empty proposed layout attached to the selected baseline.
+- Show the selected baseline room rectangles by default as a toggleable, highly subdued, non-editable reference background in scenario editing.
 - Implement scenario rename/delete.
-- Enforce exterior footprint lock for normal scenario edits.
-- Implement shared wall resize:
-  - dragging a shared wall adjusts both neighboring rectangles
-  - the total footprint area does not expand
-  - minimum room sizes are respected
+- Enforce exterior footprint lock for normal scenario edits by preventing proposed rooms from leaving the locked footprint.
+- Prevent proposed rooms from overlapping other proposed rooms.
+- Do not treat reference background rooms as collision participants.
+- Derive simple proposed wall surfaces for door/opening placement.
+- Do not require shared-wall modelling between proposed rooms in the first scenario editor pass.
 - Implement full vertical/horizontal room split.
 - Implement room relabel/rename.
-- Keep open connection as a wall state; do not true-merge rooms.
+- Keep door/opening placement as proposed wall-surface state; do not true-merge proposed rooms.
 - Improve wall action panel:
   - mark structural
   - remove wall
@@ -257,7 +264,8 @@ Scope:
 Deliverables:
 
 - Scenario CRUD in local state.
-- Shared wall push/pull resize.
+- Toggleable baseline reference background.
+- Proposed wall surfaces for door/opening placement.
 - Full room split action.
 - Locked footprint constraints for scenario edits.
 
@@ -493,7 +501,7 @@ Exit criteria:
 3. Implement inventory-driven setup and tray placement.
 4. Add footprint derivation and baseline lock.
 5. Add local scenario model and scenario creation.
-6. Implement shared-wall push/pull resize and full room split.
+6. Implement proposed-room overlap clamping, full room split, and proposed wall surfaces.
 7. Add movable/resizable openings.
 8. Add object library.
 9. Add side-by-side compare.
@@ -510,7 +518,8 @@ The next milestone should be "Local Baseline MVP":
 - Footprint is derived.
 - Baseline can be locked locally.
 - Scenario can be created from locked baseline.
-- Scenario can split a room and remove a wall.
+- Scenario starts with an empty proposed layout and subdued reference background.
+- Scenario supports manual proposed room addition inside the locked footprint.
 - Everything remains local-only but covered by tests.
 
 This milestone proves the product's core renovation loop before investing in Supabase schema and cloud save.
@@ -524,7 +533,7 @@ This milestone proves the product's core renovation loop before investing in Sup
   - exterior wall detection
   - footprint derivation
   - room split
-  - shared wall resize
+  - proposed-room overlap clamping
   - opening bounds
 - Store tests for editor actions:
   - history capture

@@ -45,6 +45,7 @@ const samplePlan = (): PlanDocument => ({
       height: 100
     }
   ],
+  proposedRooms: [],
   walls: [],
   openings: [],
   objects: []
@@ -207,27 +208,64 @@ describe('scenario bounds and history', () => {
     ]);
   });
 
-  it('preserves manually added custom walls through plan normalisation', () => {
+  it('adds proposed rooms to scenario plans without deriving walls from them', () => {
     const store = createEditorStore({
       storage: new MemoryStorage(JSON.stringify(samplePlan())),
       now: () => '2026-06-08T00:00:00.000Z',
-      createId: () => 'wall-custom-1'
+      createId: (prefix) =>
+        prefix === 'proposed-room' ? 'proposed-room-1' : 'baseline-1'
     });
 
-    store.addCustomWall(0, 120, 200, 120);
+    store.lockBaseline();
+    store.createRenovationPlan();
+    const wallCount = get(store).plan.walls.length;
+    store.addProposedRoom('bathroom');
 
-    expect(get(store).plan.walls).toEqual(
+    expect(get(store).plan.proposedRooms).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'wall-custom-1',
-          kind: 'custom',
-          x1: 0,
-          y1: 120,
-          x2: 192,
-          y2: 120
+          id: 'proposed-room-1',
+          name: 'Bathroom 1',
+          type: 'wet'
         })
       ])
     );
+    expect(get(store).plan.walls).toHaveLength(wallCount);
+    expect(get(store).selectedProposedRoomId).toBe('proposed-room-1');
+  });
+
+  it('moves, resizes, renames, deletes, and undoes proposed rooms', () => {
+    let idIndex = 0;
+    const ids = ['baseline-1', 'proposed-room-1'];
+    const store = createEditorStore({
+      storage: new MemoryStorage(JSON.stringify(samplePlan())),
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => ids[idIndex++] ?? 'id'
+    });
+
+    store.lockBaseline();
+    store.createRenovationPlan();
+    store.addProposedRoom('bedroom');
+    store.moveProposedRoom('proposed-room-1', 180, 0, { history: true });
+    expect(
+      get(store).plan.proposedRooms.find(
+        (room) => room.id === 'proposed-room-1'
+      )?.x
+    ).toBe(56);
+
+    store.resizeProposedRoom('proposed-room-1', 'e', 400, 100, {
+      history: true
+    });
+    expect(get(store).plan.proposedRooms[0].width).toBe(200);
+
+    store.updateProposedRoom('proposed-room-1', { name: 'New study' });
+    expect(get(store).plan.proposedRooms[0].name).toBe('New study');
+
+    store.deleteProposedRoom('proposed-room-1');
+    expect(get(store).plan.proposedRooms).toHaveLength(0);
+
+    store.undo();
+    expect(get(store).plan.proposedRooms[0].name).toBe('New study');
   });
 
   it('adds openings at a requested wall offset and clamps later edits', () => {
