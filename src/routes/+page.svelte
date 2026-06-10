@@ -2,11 +2,14 @@
   import {
     ArrowLeft,
     Check,
+    CopyPlus,
+    Lock,
     Minus,
     Plus,
     Redo2,
     RotateCcw,
-    Undo2
+    Undo2,
+    Unlock
   } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import {
@@ -16,7 +19,8 @@
     pixelsToMetres,
     roomSetupOptions,
     selectedRoom,
-    selectedWall
+    selectedWall,
+    snapValue
   } from '$lib/editor/editorStore';
   import type { ResizeHandle } from '$lib/editor/editorStore';
   import type { Opening, Room, SetupRoomKind, Wall } from '$lib/domain/types';
@@ -40,9 +44,22 @@
         historyCaptured: boolean;
       }
     | null = null;
+  let addWallMode = false;
+  let wallDraft: {
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  } | null = null;
   let suppressNextCanvasClick = false;
   let suppressCanvasClickTimer: ReturnType<typeof setTimeout> | undefined;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  let wallMenu: {
+    wallId: string;
+    x: number;
+    y: number;
+    offset: number;
+  } | null = null;
 
   let counts = Object.fromEntries(
     roomSetupOptions.map((option) => [option.kind, 0])
@@ -76,6 +93,18 @@
 
   $: totalRooms = Object.values(counts).reduce((sum, count) => sum + count, 0);
   $: measuredRooms = $editor.inventory.filter((room) => room.measured).length;
+  $: isBaselineMode = $editor.activeMode === 'baseline';
+  $: isScenarioMode = $editor.activeMode === 'scenario';
+  $: isLockedBaseline = Boolean($editor.lockedBaseline);
+  $: lockedBounds = $editor.lockedBaseline?.bounds ?? null;
+  $: canEditGeometry = isScenarioMode || !isLockedBaseline;
+  $: canEditWalls = isScenarioMode || !isLockedBaseline;
+  $: modeTitle = isScenarioMode ? 'Renovation plan' : 'Existing v1';
+  $: modeSubtitle = isScenarioMode
+    ? 'Editable renovation copy'
+    : isLockedBaseline
+      ? 'Locked baseline'
+      : 'Draft baseline';
 
   function scheduleSaved() {
     clearTimeout(saveTimer);
@@ -127,8 +156,21 @@
     return point.matrixTransform(canvas.getScreenCTM()?.inverse());
   }
 
+  function pixelsFromMetres(value: string) {
+    const metres = Number(value);
+    if (!Number.isFinite(metres)) return null;
+
+    return (metres / 0.25) * GRID_SIZE;
+  }
+
   function handleRoomPointerDown(event: PointerEvent, room: Room) {
     event.stopPropagation();
+    wallMenu = null;
+    addWallMode = false;
+    wallDraft = null;
+    editor.selectRoom(room.id);
+    if (!canEditGeometry) return;
+
     const point = getCanvasPoint(event);
     interaction = {
       mode: 'move',
@@ -138,7 +180,6 @@
       historyCaptured: false
     };
 
-    editor.selectRoom(room.id);
     canvas.setPointerCapture(event.pointerId);
   }
 
@@ -148,6 +189,10 @@
     handle: ResizeHandle
   ) {
     event.stopPropagation();
+    addWallMode = false;
+    wallDraft = null;
+    if (!canEditGeometry) return;
+
     interaction = {
       mode: 'resize',
       roomId,
@@ -160,40 +205,93 @@
 
   function handleWallPointerDown(event: PointerEvent, wallId: string) {
     event.stopPropagation();
+    addWallMode = false;
+    wallDraft = null;
+    const wall = $editor.plan.walls.find(
+      (candidate) => candidate.id === wallId
+    );
+    const point = getCanvasPoint(event);
+    wallMenu = {
+      wallId,
+      x: event.clientX,
+      y: event.clientY,
+      offset: wall ? wallOffsetFromPoint(wall, point.x, point.y) : 0
+    };
     editor.selectWall(wallId);
   }
 
+  function handleCanvasPointerDown(event: PointerEvent) {
+    if (!addWallMode || !canEditWalls) return;
+
+    const point = getCanvasPoint(event);
+    const x = snapValue(point.x, $editor.snapToGrid);
+    const y = snapValue(point.y, $editor.snapToGrid);
+    wallMenu = null;
+    editor.selectWall(null);
+    wallDraft = { x1: x, y1: y, x2: x, y2: y };
+    canvas.setPointerCapture(event.pointerId);
+  }
+
   function handleCanvasPointerMove(event: PointerEvent) {
-    if (!interaction) return;
+    if (!interaction && !wallDraft) return;
 
     const point = getCanvasPoint(event);
 
-    if (interaction.mode === 'move') {
+    if (wallDraft) {
+      wallDraft = {
+        ...wallDraft,
+        x2: snapValue(point.x, $editor.snapToGrid),
+        y2: snapValue(point.y, $editor.snapToGrid)
+      };
+      return;
+    }
+
+    const currentInteraction = interaction;
+    if (!currentInteraction) return;
+
+    if (currentInteraction.mode === 'move') {
       editor.moveRoom(
-        interaction.roomId,
-        point.x - interaction.offsetX,
-        point.y - interaction.offsetY,
+        currentInteraction.roomId,
+        point.x - currentInteraction.offsetX,
+        point.y - currentInteraction.offsetY,
         {
-          history: !interaction.historyCaptured
+          history: !currentInteraction.historyCaptured
         }
       );
     } else {
       editor.resizeRoom(
-        interaction.roomId,
-        interaction.handle,
+        currentInteraction.roomId,
+        currentInteraction.handle,
         point.x,
         point.y,
         {
-          history: !interaction.historyCaptured
+          history: !currentInteraction.historyCaptured
         }
       );
     }
 
-    interaction.historyCaptured = true;
+    currentInteraction.historyCaptured = true;
     scheduleSaved();
   }
 
   function handleCanvasPointerUp(event: PointerEvent) {
+    if (wallDraft) {
+      editor.addCustomWall(
+        wallDraft.x1,
+        wallDraft.y1,
+        wallDraft.x2,
+        wallDraft.y2
+      );
+      wallDraft = null;
+      addWallMode = false;
+      suppressNextCanvasClick = true;
+      clearTimeout(suppressCanvasClickTimer);
+      suppressCanvasClickTimer = setTimeout(() => {
+        suppressNextCanvasClick = false;
+      }, 0);
+      scheduleSaved();
+    }
+
     if (interaction) {
       suppressNextCanvasClick = true;
       clearTimeout(suppressCanvasClickTimer);
@@ -202,7 +300,7 @@
       }, 0);
     }
 
-    if (interaction && canvas.hasPointerCapture(event.pointerId)) {
+    if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
 
@@ -216,6 +314,9 @@
       return;
     }
 
+    wallMenu = null;
+    addWallMode = false;
+    wallDraft = null;
     editor.selectRoom(null);
   }
 
@@ -233,6 +334,9 @@
 
   function handleCanvasKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
+      wallMenu = null;
+      addWallMode = false;
+      wallDraft = null;
       editor.selectRoom(null);
     }
   }
@@ -240,6 +344,9 @@
   function handleRoomKeydown(event: KeyboardEvent, roomId: string) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
+      wallMenu = null;
+      addWallMode = false;
+      wallDraft = null;
       editor.selectRoom(roomId);
     }
   }
@@ -247,8 +354,17 @@
   function handleWallKeydown(event: KeyboardEvent, wallId: string) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
+      wallMenu = null;
+      addWallMode = false;
+      wallDraft = null;
       editor.selectWall(wallId);
     }
+  }
+
+  function wallOffsetFromPoint(wall: Wall, x: number, y: number) {
+    return wall.x1 === wall.x2
+      ? Math.abs(y - Math.min(wall.y1, wall.y2))
+      : Math.abs(x - Math.min(wall.x1, wall.x2));
   }
 
   function wallOpenings(wall: Wall) {
@@ -279,6 +395,26 @@
           y1: wall.y1,
           x2: Math.min(wall.x1, wall.x2) + offset + opening.width,
           y2: wall.y2
+        };
+  }
+
+  function wallHitbox(wall: Wall) {
+    const thickness = 18;
+    const half = thickness / 2;
+    const isVertical = wall.x1 === wall.x2;
+
+    return isVertical
+      ? {
+          x: wall.x1 - half,
+          y: Math.min(wall.y1, wall.y2),
+          width: thickness,
+          height: Math.abs(wall.y2 - wall.y1)
+        }
+      : {
+          x: Math.min(wall.x1, wall.x2),
+          y: wall.y1 - half,
+          width: Math.abs(wall.x2 - wall.x1),
+          height: thickness
         };
   }
 
@@ -370,8 +506,9 @@
                     class="grid size-9 place-items-center rounded-md border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a] disabled:cursor-not-allowed disabled:opacity-40"
                     type="button"
                     aria-label={`Remove ${option.label}`}
+                    data-testid={`remove-${option.kind}`}
                     disabled={counts[option.kind] === 0}
-                    on:click={() => countRoom(option.kind, -1)}
+                    onclick={() => countRoom(option.kind, -1)}
                   >
                     <Minus size={17} />
                   </button>
@@ -379,7 +516,8 @@
                     class="grid size-9 place-items-center rounded-md border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a]"
                     type="button"
                     aria-label={`Add ${option.label}`}
-                    on:click={() => countRoom(option.kind, 1)}
+                    data-testid={`add-${option.kind}`}
+                    onclick={() => countRoom(option.kind, 1)}
                   >
                     <Plus size={17} />
                   </button>
@@ -393,7 +531,7 @@
               class="inline-flex min-h-11 items-center gap-2 rounded-md bg-[#0f766e] px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
               type="button"
               disabled={totalRooms === 0}
-              on:click={submitCounts}
+              onclick={submitCounts}
             >
               <Check size={18} />
               Continue
@@ -426,7 +564,7 @@
                   <input
                     class="min-h-10 rounded-md border border-[#c8d1dc] bg-white px-3 text-[#17202a]"
                     value={room.label}
-                    on:input={(event) =>
+                    oninput={(event) =>
                       editor.updateInventoryRoom(room.id, {
                         label: event.currentTarget.value
                       })}
@@ -441,7 +579,7 @@
                     step="0.25"
                     type="number"
                     value={pixelsToMetres(room.width).toFixed(2)}
-                    on:input={(event) =>
+                    oninput={(event) =>
                       updateInventoryMetres(
                         room.id,
                         'width',
@@ -458,7 +596,7 @@
                     step="0.25"
                     type="number"
                     value={pixelsToMetres(room.height).toFixed(2)}
-                    on:input={(event) =>
+                    oninput={(event) =>
                       updateInventoryMetres(
                         room.id,
                         'height',
@@ -469,7 +607,7 @@
                 <button
                   class="min-h-10 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
                   type="button"
-                  on:click={() => useSuggestedSize(room.id, room.kind)}
+                  onclick={() => useSuggestedSize(room.id, room.kind)}
                 >
                   Suggested
                 </button>
@@ -481,7 +619,7 @@
             <button
               class="inline-flex min-h-11 items-center gap-2 rounded-md border border-[#c8d1dc] bg-white px-4 text-sm font-bold text-[#17202a]"
               type="button"
-              on:click={editor.returnToCounts}
+              onclick={editor.returnToCounts}
             >
               <ArrowLeft size={18} />
               Counts
@@ -489,7 +627,7 @@
             <button
               class="inline-flex min-h-11 items-center gap-2 rounded-md bg-[#0f766e] px-4 text-sm font-bold text-white"
               type="button"
-              on:click={() => {
+              onclick={() => {
                 editor.startEditorFromInventory();
                 scheduleSaved();
               }}
@@ -511,10 +649,14 @@
         <p
           class="mb-2 text-[0.78rem] font-bold tracking-normal text-[#6b7682] uppercase"
         >
-          Existing plan editor
+          {isScenarioMode ? 'Renovation editor' : 'Existing plan editor'}
         </p>
         <h1 class="m-0 text-[1.35rem] leading-[1.2] font-bold tracking-normal">
-          Arrange your measured rooms
+          {isScenarioMode
+            ? 'Explore changes inside the locked footprint'
+            : isLockedBaseline
+              ? 'Review your locked baseline'
+              : 'Arrange your measured rooms'}
         </h1>
       </div>
 
@@ -540,25 +682,47 @@
             </dd>
           </div>
         </dl>
-        <button
-          class="inline-flex min-h-10 items-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
-          type="button"
-          on:click={editor.returnToSetup}
-        >
-          <ArrowLeft size={17} />
-          Edit setup
-        </button>
+        {#if !isLockedBaseline}
+          <button
+            class="inline-flex min-h-10 items-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+            type="button"
+            onclick={editor.returnToSetup}
+          >
+            <ArrowLeft size={17} />
+            Edit setup
+          </button>
+        {/if}
       </section>
 
-      <section class="grid gap-3">
-        <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">Next</h2>
-        <ol class="m-0 grid gap-2.5 pl-5 text-[#66717e]">
-          <li class="font-bold text-[#17202a]">Drag rooms into position</li>
-          <li>Resize rooms if measurements change</li>
-          <li>Join room edges to create shared walls</li>
-          <li>Lock baseline when the footprint looks right</li>
-        </ol>
-      </section>
+      {#if isScenarioMode}
+        <section class="grid gap-3">
+          <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">
+            Renovation bounds
+          </h2>
+          <p class="m-0 text-sm leading-6 text-[#66717e]">
+            Rooms can move and resize, but they stay inside the locked existing
+            footprint.
+          </p>
+        </section>
+      {:else if isLockedBaseline}
+        <section class="grid gap-3">
+          <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">Next</h2>
+          <ol class="m-0 grid gap-2.5 pl-5 text-[#66717e]">
+            <li class="font-bold text-[#17202a]">Create a renovation plan</li>
+            <li>Switch between Existing and Renovation from the header</li>
+          </ol>
+        </section>
+      {:else}
+        <section class="grid gap-3">
+          <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">Next</h2>
+          <ol class="m-0 grid gap-2.5 pl-5 text-[#66717e]">
+            <li class="font-bold text-[#17202a]">Drag rooms into position</li>
+            <li>Resize rooms if measurements change</li>
+            <li>Join room edges to create shared walls</li>
+            <li>Lock baseline when the footprint looks right</li>
+          </ol>
+        </section>
+      {/if}
 
       {#if $selectedRoom}
         <section class="grid gap-3" aria-live="polite">
@@ -595,6 +759,14 @@
           <dl class="m-0 grid gap-[9px]">
             <div class="flex items-baseline justify-between gap-4">
               <dt class="text-[0.78rem] font-bold text-[#66717e] uppercase">
+                Type
+              </dt>
+              <dd class="m-0 text-sm font-bold text-[#17202a]">
+                {$selectedWall.kind}
+              </dd>
+            </div>
+            <div class="flex items-baseline justify-between gap-4">
+              <dt class="text-[0.78rem] font-bold text-[#66717e] uppercase">
                 Length
               </dt>
               <dd class="m-0 text-sm font-bold text-[#17202a]">
@@ -610,42 +782,89 @@
               <dt class="text-[0.78rem] font-bold text-[#66717e] uppercase">
                 Openings
               </dt>
-              <dd class="m-0 text-sm font-bold text-[#17202a]">
+              <dd
+                class="m-0 text-sm font-bold text-[#17202a]"
+                data-testid="selected-wall-openings"
+              >
                 {wallOpenings($selectedWall).length}
               </dd>
             </div>
           </dl>
-          <div class="grid gap-2">
-            <button
-              class="min-h-10 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-left text-sm font-bold text-[#17202a]"
-              type="button"
-              on:click={() =>
-                editor.updateWall($selectedWall.id, {
-                  structural: !$selectedWall.structural
-                })}
-            >
-              {$selectedWall.structural
-                ? 'Clear structural mark'
-                : 'Mark structural'}
-            </button>
-            <button
-              class="min-h-10 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-left text-sm font-bold text-[#17202a]"
-              type="button"
-              on:click={() =>
-                editor.updateWall($selectedWall.id, {
-                  removed: !$selectedWall.removed
-                })}
-            >
-              {$selectedWall.removed ? 'Restore wall' : 'Remove wall'}
-            </button>
-            <button
-              class="min-h-10 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-left text-sm font-bold text-[#17202a]"
-              type="button"
-              on:click={() => editor.addOpening($selectedWall.id)}
-            >
-              Add door/opening
-            </button>
-          </div>
+          {#if wallOpenings($selectedWall).length > 0}
+            <div class="grid gap-2">
+              {#each wallOpenings($selectedWall) as opening (opening.id)}
+                {@const length = Math.hypot(
+                  $selectedWall.x2 - $selectedWall.x1,
+                  $selectedWall.y2 - $selectedWall.y1
+                )}
+                {@const maxOffset = Math.max(0, length - opening.width)}
+                <div class="grid gap-2 rounded-md border border-[#d8dee5] p-3">
+                  <div class="flex items-center justify-between gap-3">
+                    <strong class="text-sm">Door</strong>
+                    <span class="text-xs font-bold text-[#66717e]">
+                      {pixelsToMetres(opening.offset).toFixed(2)}m from start
+                    </span>
+                  </div>
+                  <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+                    Position
+                    <input
+                      type="range"
+                      min="0"
+                      max={maxOffset}
+                      step={$editor.snapToGrid ? GRID_SIZE : 1}
+                      value={opening.offset}
+                      oninput={(event) => {
+                        editor.updateOpening(opening.id, {
+                          offset: Number(event.currentTarget.value)
+                        });
+                        scheduleSaved();
+                      }}
+                    />
+                  </label>
+                  <div class="grid grid-cols-2 gap-2">
+                    <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+                      Offset m
+                      <input
+                        class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                        inputmode="decimal"
+                        min="0"
+                        step="0.25"
+                        type="number"
+                        value={pixelsToMetres(opening.offset).toFixed(2)}
+                        oninput={(event) => {
+                          const value = pixelsFromMetres(
+                            event.currentTarget.value
+                          );
+                          if (value === null) return;
+                          editor.updateOpening(opening.id, { offset: value });
+                          scheduleSaved();
+                        }}
+                      />
+                    </label>
+                    <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+                      Width m
+                      <input
+                        class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                        inputmode="decimal"
+                        min="0.25"
+                        step="0.25"
+                        type="number"
+                        value={pixelsToMetres(opening.width).toFixed(2)}
+                        oninput={(event) => {
+                          const value = pixelsFromMetres(
+                            event.currentTarget.value
+                          );
+                          if (value === null) return;
+                          editor.updateOpening(opening.id, { width: value });
+                          scheduleSaved();
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
         </section>
       {/if}
     </aside>
@@ -659,15 +878,110 @@
       >
         <div class="grid gap-[3px]">
           <strong>My Renoplan Project</strong>
-          <span class="text-[0.88rem] text-[#6b7682]">Existing v1 draft</span>
+          <span class="text-[0.88rem] text-[#6b7682]"
+            >{modeTitle} · {modeSubtitle}</span
+          >
         </div>
         <div class="flex items-center gap-3.5">
+          {#if $editor.scenarioPlan}
+            <div
+              class="grid grid-cols-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] p-0.5"
+              aria-label="Plan mode"
+            >
+              <button
+                class={`min-h-8 rounded-[4px] px-3 text-sm font-bold ${
+                  isBaselineMode
+                    ? 'bg-white text-[#17202a] shadow-sm'
+                    : 'text-[#5f6c7b]'
+                }`}
+                type="button"
+                onclick={() => editor.switchMode('baseline')}
+              >
+                Existing
+              </button>
+              <button
+                class={`min-h-8 rounded-[4px] px-3 text-sm font-bold ${
+                  isScenarioMode
+                    ? 'bg-white text-[#17202a] shadow-sm'
+                    : 'text-[#5f6c7b]'
+                }`}
+                type="button"
+                onclick={() => editor.switchMode('scenario')}
+              >
+                Renovation
+              </button>
+            </div>
+          {/if}
+          {#if !isLockedBaseline}
+            <button
+              class="inline-flex min-h-9 items-center gap-2 rounded-md bg-[#0f766e] px-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
+              type="button"
+              disabled={$editor.baselinePlan.rooms.length === 0}
+              onclick={() => {
+                editor.lockBaseline();
+                scheduleSaved();
+              }}
+            >
+              <Lock size={16} />
+              Lock baseline
+            </button>
+          {:else if isBaselineMode && !$editor.scenarioPlan}
+            <button
+              class="inline-flex min-h-9 items-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+              type="button"
+              onclick={() => {
+                editor.unlockBaseline();
+                scheduleSaved();
+              }}
+            >
+              <Unlock size={16} />
+              Unlock
+            </button>
+            <button
+              class="inline-flex min-h-9 items-center gap-2 rounded-md bg-[#0f766e] px-3 text-sm font-bold text-white"
+              type="button"
+              onclick={() => {
+                editor.createRenovationPlan();
+                scheduleSaved();
+              }}
+            >
+              <CopyPlus size={16} />
+              Create renovation plan
+            </button>
+          {:else if isBaselineMode && $editor.scenarioPlan}
+            <button
+              class="inline-flex min-h-9 items-center gap-2 rounded-md bg-[#0f766e] px-3 text-sm font-bold text-white"
+              type="button"
+              onclick={() => editor.switchMode('scenario')}
+            >
+              Renovation plan
+            </button>
+          {/if}
+          {#if canEditWalls}
+            <button
+              class={`inline-flex min-h-9 items-center gap-2 rounded-md px-3 text-sm font-bold ${
+                addWallMode
+                  ? 'bg-[#17202a] text-white'
+                  : 'border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a]'
+              }`}
+              type="button"
+              aria-pressed={addWallMode}
+              onclick={() => {
+                wallMenu = null;
+                wallDraft = null;
+                addWallMode = !addWallMode;
+              }}
+            >
+              <Plus size={16} />
+              Add wall
+            </button>
+          {/if}
           <button
             class="grid size-9 place-items-center rounded-md border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a] disabled:cursor-not-allowed disabled:opacity-40"
             type="button"
             aria-label="Undo"
             disabled={$editor.past.length === 0}
-            on:click={() => {
+            onclick={() => {
               editor.undo();
               scheduleSaved();
             }}
@@ -679,7 +993,7 @@
             type="button"
             aria-label="Redo"
             disabled={$editor.future.length === 0}
-            on:click={() => {
+            onclick={() => {
               editor.redo();
               scheduleSaved();
             }}
@@ -693,7 +1007,7 @@
               class="size-4"
               type="checkbox"
               checked={$editor.snapToGrid}
-              on:change={editor.toggleSnap}
+              onchange={editor.toggleSnap}
             />
             Snap {$editor.snapToGrid ? 'on' : 'off'}
           </label>
@@ -702,164 +1016,426 @@
           >
             {$editor.saveState}
           </div>
-          <button
-            class="grid size-9 place-items-center rounded-md border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a]"
-            type="button"
-            aria-label="Reset setup"
-            on:click={() => {
-              editor.resetLocalPlan();
-              scheduleSaved();
-            }}
-          >
-            <RotateCcw size={18} />
-          </button>
+          {#if !isLockedBaseline}
+            <button
+              class="grid size-9 place-items-center rounded-md border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a]"
+              type="button"
+              aria-label="Reset setup"
+              onclick={() => {
+                editor.resetLocalPlan();
+                scheduleSaved();
+              }}
+            >
+              <RotateCcw size={18} />
+            </button>
+          {/if}
         </div>
       </header>
 
       <div class="min-h-0 min-w-0 overflow-auto p-6">
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <svg
-          bind:this={canvas}
-          class="block h-[calc(100vh-112px)] min-h-[520px] w-full min-w-[860px] border border-[#cbd5df] bg-[#eef2f6]"
-          viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
-          role="application"
-          tabindex="0"
-          aria-label="Floor plan canvas. Drag room blocks to arrange the existing plan."
-          on:pointermove={handleCanvasPointerMove}
-          on:pointerup={handleCanvasPointerUp}
-          on:pointerleave={handleCanvasPointerUp}
-          on:click={handleCanvasClick}
-          on:keydown={handleCanvasKeydown}
-        >
-          <defs>
-            <pattern
-              id="grid"
-              width={GRID_SIZE}
-              height={GRID_SIZE}
-              patternUnits="userSpaceOnUse"
+        {#if wallMenu && $selectedWall && canEditWalls}
+          <div
+            class="fixed z-20 grid min-w-44 gap-1 rounded-md border border-[#b8c4d1] bg-white p-1.5 shadow-lg"
+            style={`left: ${wallMenu.x + 10}px; top: ${wallMenu.y + 10}px;`}
+            role="menu"
+            aria-label="Wall actions"
+          >
+            <button
+              class="min-h-9 rounded-[4px] px-3 text-left text-sm font-bold text-[#17202a] hover:bg-[#eef2f6]"
+              type="button"
+              role="menuitem"
+              onclick={() => {
+                editor.updateWall($selectedWall.id, {
+                  structural: !$selectedWall.structural
+                });
+                wallMenu = null;
+                scheduleSaved();
+              }}
             >
-              <path
-                d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`}
-                fill="none"
-                stroke="#d9e0e7"
-                stroke-width="1"
-              />
-            </pattern>
-          </defs>
-
-          <rect width={CANVAS_WIDTH} height={CANVAS_HEIGHT} fill="url(#grid)" />
-
-          {#each $editor.plan.rooms as room (room.id)}
-            <g
-              role="button"
-              tabindex="0"
-              aria-label={`Select ${room.name}`}
-              on:pointerdown={(event) => handleRoomPointerDown(event, room)}
-              on:click={handleRoomClick}
-              on:keydown={(event) => handleRoomKeydown(event, room.id)}
+              {$selectedWall.structural
+                ? 'Clear structural mark'
+                : 'Mark structural'}
+            </button>
+            {#if $selectedWall.kind !== 'exterior'}
+              <button
+                class="min-h-9 rounded-[4px] px-3 text-left text-sm font-bold text-[#17202a] hover:bg-[#eef2f6]"
+                type="button"
+                role="menuitem"
+                onclick={() => {
+                  editor.updateWall($selectedWall.id, {
+                    removed: !$selectedWall.removed
+                  });
+                  wallMenu = null;
+                  scheduleSaved();
+                }}
+              >
+                Remove wall
+              </button>
+            {/if}
+            <button
+              class="min-h-9 rounded-[4px] px-3 text-left text-sm font-bold text-[#17202a] hover:bg-[#eef2f6]"
+              type="button"
+              role="menuitem"
+              onclick={() => {
+                editor.addOpening($selectedWall.id, wallMenu?.offset);
+                wallMenu = null;
+                scheduleSaved();
+              }}
             >
+              Add door/opening
+            </button>
+          </div>
+        {/if}
+
+        {#if isLockedBaseline && isBaselineMode}
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <svg
+            class="block h-[calc(100vh-112px)] min-h-[520px] w-full min-w-[860px] border border-[#cbd5df] bg-[#eef2f6]"
+            viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+            role="application"
+            tabindex="0"
+            aria-label="Locked floor plan canvas. Review the existing baseline."
+            onclick={handleCanvasClick}
+            onkeydown={handleCanvasKeydown}
+          >
+            <defs>
+              <pattern
+                id="locked-grid"
+                width={GRID_SIZE}
+                height={GRID_SIZE}
+                patternUnits="userSpaceOnUse"
+              >
+                <path
+                  d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`}
+                  fill="none"
+                  stroke="#d9e0e7"
+                  stroke-width="1"
+                />
+              </pattern>
+            </defs>
+
+            <rect width={CANVAS_WIDTH} height={CANVAS_HEIGHT} fill="#dde4ec" />
+            {#if lockedBounds}
               <rect
-                class={`cursor-move ${roomFillClasses[room.type]} ${
-                  room.id === $editor.selectedRoomId
-                    ? 'stroke-[#0f766e] stroke-[4]'
-                    : 'stroke-[#1d2733] stroke-[3]'
-                }`}
-                x={room.x}
-                y={room.y}
-                width={room.width}
-                height={room.height}
+                x={lockedBounds.x}
+                y={lockedBounds.y}
+                width={lockedBounds.width}
+                height={lockedBounds.height}
+                fill="url(#locked-grid)"
+              />
+              <rect
+                class="pointer-events-none fill-transparent stroke-[#0f766e] stroke-[4]"
+                data-testid="locked-baseline-bounds"
+                x={lockedBounds.x}
+                y={lockedBounds.y}
+                width={lockedBounds.width}
+                height={lockedBounds.height}
                 rx="2"
                 vector-effect="non-scaling-stroke"
               />
-              <text
-                class="pointer-events-none select-none fill-[#1d2733] text-base font-bold"
-                x={room.x + 14}
-                y={room.y + 28}
-              >
-                {room.name}
-              </text>
-              {#if room.id === $editor.selectedRoomId}
-                <text
-                  class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
-                  x={room.x + 14}
-                  y={room.y + room.height - 16}
-                >
-                  {pixelsToMetres(room.width).toFixed(2)}m x {pixelsToMetres(
-                    room.height
-                  ).toFixed(2)}m
-                </text>
-              {/if}
-              {#if room.id === $editor.selectedRoomId}
-                {#each resizeHandles(room) as item (item.handle)}
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
-                  <rect
-                    class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
-                    x={item.x - 5}
-                    y={item.y - 5}
-                    width="10"
-                    height="10"
-                    rx="2"
-                    vector-effect="non-scaling-stroke"
-                    on:pointerdown={(event) =>
-                      handleResizePointerDown(event, room.id, item.handle)}
-                  />
-                {/each}
-              {/if}
-            </g>
-          {/each}
+            {/if}
 
-          {#each $editor.plan.walls as wall (wall.id)}
-            <g
-              role="button"
-              tabindex="0"
-              aria-label={`Select shared wall between ${wall.roomIds.join(' and ')}`}
-              on:pointerdown={(event) => handleWallPointerDown(event, wall.id)}
-              on:click={handleWallClick}
-              on:keydown={(event) => handleWallKeydown(event, wall.id)}
-            >
-              <line
-                class="cursor-pointer stroke-transparent stroke-[18]"
-                x1={wall.x1}
-                y1={wall.y1}
-                x2={wall.x2}
-                y2={wall.y2}
-              />
-              <line
-                class={wall.removed
-                  ? `pointer-events-none stroke-white stroke-[8] [stroke-dasharray:12_8] ${
-                      wall.id === $editor.selectedWallId
-                        ? 'drop-shadow-[0_0_2px_#0f766e]'
-                        : ''
-                    }`
-                  : `pointer-events-none ${
-                      wall.structural ? 'stroke-[#7c2d12]' : 'stroke-[#111827]'
+            {#each $editor.plan.rooms as room (room.id)}
+              <g
+                role="button"
+                tabindex="0"
+                aria-label={`Select ${room.name}`}
+                onclick={(event) => {
+                  event.stopPropagation();
+                  editor.selectRoom(room.id);
+                }}
+                onkeydown={(event) => handleRoomKeydown(event, room.id)}
+              >
+                <rect
+                  class={`cursor-default ${roomFillClasses[room.type]} ${
+                    room.id === $editor.selectedRoomId
+                      ? 'stroke-[#0f766e] stroke-[4]'
+                      : 'stroke-[#1d2733] stroke-[3]'
+                  }`}
+                  x={room.x}
+                  y={room.y}
+                  width={room.width}
+                  height={room.height}
+                  rx="2"
+                  vector-effect="non-scaling-stroke"
+                />
+                <text
+                  class="pointer-events-none select-none fill-[#1d2733] text-base font-bold"
+                  x={room.x + 14}
+                  y={room.y + 28}
+                >
+                  {room.name}
+                </text>
+                {#if room.id === $editor.selectedRoomId}
+                  <text
+                    class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
+                    x={room.x + 14}
+                    y={room.y + room.height - 16}
+                  >
+                    {pixelsToMetres(room.width).toFixed(2)}m x {pixelsToMetres(
+                      room.height
+                    ).toFixed(2)}m
+                  </text>
+                {/if}
+              </g>
+            {/each}
+
+            {#each $editor.plan.walls as wall (wall.id)}
+              {#if !wall.removed}
+                {@const hitbox = wallHitbox(wall)}
+                <g
+                  role="button"
+                  tabindex="0"
+                  data-testid={wall.id}
+                  aria-label={wall.kind === 'shared'
+                    ? `Select shared wall between ${wall.roomIds.join(' and ')}`
+                    : wall.kind === 'custom'
+                      ? 'Select custom wall'
+                      : `Select exterior wall of ${wall.roomIds[0]}`}
+                  onclick={(event) => {
+                    event.stopPropagation();
+                    editor.selectWall(wall.id);
+                  }}
+                  onkeydown={(event) => handleWallKeydown(event, wall.id)}
+                >
+                  <rect
+                    class="cursor-default fill-black opacity-[0.01]"
+                    data-testid={wall.kind === 'custom'
+                      ? 'custom-wall-hitbox'
+                      : `${wall.id}-hitbox`}
+                    x={hitbox.x}
+                    y={hitbox.y}
+                    width={hitbox.width}
+                    height={hitbox.height}
+                  />
+                  <line
+                    class={`pointer-events-none ${
+                      wall.kind === 'exterior'
+                        ? 'stroke-[#4b5563]'
+                        : wall.structural
+                          ? 'stroke-[#7c2d12]'
+                          : 'stroke-[#111827]'
                     } ${wall.id === $editor.selectedWallId ? 'stroke-[7]' : 'stroke-[5]'}`}
-                x1={wall.x1}
-                y1={wall.y1}
-                x2={wall.x2}
-                y2={wall.y2}
+                    x1={wall.x1}
+                    y1={wall.y1}
+                    x2={wall.x2}
+                    y2={wall.y2}
+                  />
+                  {#each wallOpenings(wall) as opening (opening.id)}
+                    {@const position = openingPosition(wall, opening)}
+                    <line
+                      class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
+                      x1={position.x1}
+                      y1={position.y1}
+                      x2={position.x2}
+                      y2={position.y2}
+                    />
+                    <line
+                      class="pointer-events-none stroke-[#0f766e] stroke-[2]"
+                      x1={position.x1}
+                      y1={position.y1}
+                      x2={position.x2}
+                      y2={position.y2}
+                    />
+                  {/each}
+                </g>
+              {/if}
+            {/each}
+          </svg>
+        {:else}
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <svg
+            bind:this={canvas}
+            class="block h-[calc(100vh-112px)] min-h-[520px] w-full min-w-[860px] border border-[#cbd5df] bg-[#eef2f6]"
+            viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+            role="application"
+            tabindex="0"
+            aria-label="Floor plan canvas. Drag room blocks to arrange the existing plan."
+            onpointerdown={handleCanvasPointerDown}
+            onpointermove={handleCanvasPointerMove}
+            onpointerup={handleCanvasPointerUp}
+            onpointerleave={handleCanvasPointerUp}
+            onclick={handleCanvasClick}
+            onkeydown={handleCanvasKeydown}
+          >
+            <defs>
+              <pattern
+                id="grid"
+                width={GRID_SIZE}
+                height={GRID_SIZE}
+                patternUnits="userSpaceOnUse"
+              >
+                <path
+                  d={`M ${GRID_SIZE} 0 L 0 0 0 ${GRID_SIZE}`}
+                  fill="none"
+                  stroke="#d9e0e7"
+                  stroke-width="1"
+                />
+              </pattern>
+            </defs>
+
+            {#if lockedBounds}
+              <rect
+                width={CANVAS_WIDTH}
+                height={CANVAS_HEIGHT}
+                fill="#dde4ec"
               />
-              {#each wallOpenings(wall) as opening (opening.id)}
-                {@const position = openingPosition(wall, opening)}
-                <line
-                  class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
-                  x1={position.x1}
-                  y1={position.y1}
-                  x2={position.x2}
-                  y2={position.y2}
+              <rect
+                x={lockedBounds.x}
+                y={lockedBounds.y}
+                width={lockedBounds.width}
+                height={lockedBounds.height}
+                fill="url(#grid)"
+              />
+              <rect
+                class="pointer-events-none fill-transparent stroke-[#0f766e] stroke-[4] [stroke-dasharray:10_8]"
+                data-testid="scenario-bounds"
+                x={lockedBounds.x}
+                y={lockedBounds.y}
+                width={lockedBounds.width}
+                height={lockedBounds.height}
+                rx="2"
+                vector-effect="non-scaling-stroke"
+              />
+            {:else}
+              <rect
+                width={CANVAS_WIDTH}
+                height={CANVAS_HEIGHT}
+                fill="url(#grid)"
+              />
+            {/if}
+
+            {#each $editor.plan.rooms as room (room.id)}
+              <g
+                role="button"
+                tabindex="0"
+                aria-label={`Select ${room.name}`}
+                onpointerdown={(event) => handleRoomPointerDown(event, room)}
+                onclick={handleRoomClick}
+                onkeydown={(event) => handleRoomKeydown(event, room.id)}
+              >
+                <rect
+                  class="cursor-move {roomFillClasses[room.type]} {room.id ===
+                  $editor.selectedRoomId
+                    ? 'stroke-[#0f766e] stroke-[4]'
+                    : 'stroke-[#1d2733] stroke-[3]'}"
+                  x={room.x}
+                  y={room.y}
+                  width={room.width}
+                  height={room.height}
+                  rx="2"
+                  vector-effect="non-scaling-stroke"
                 />
-                <line
-                  class="pointer-events-none stroke-[#0f766e] stroke-[2]"
-                  x1={position.x1}
-                  y1={position.y1}
-                  x2={position.x2}
-                  y2={position.y2}
-                />
-              {/each}
-            </g>
-          {/each}
-        </svg>
+                <text
+                  class="pointer-events-none select-none fill-[#1d2733] text-base font-bold"
+                  x={room.x + 14}
+                  y={room.y + 28}
+                >
+                  {room.name}
+                </text>
+                {#if room.id === $editor.selectedRoomId}
+                  <text
+                    class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
+                    x={room.x + 14}
+                    y={room.y + room.height - 16}
+                  >
+                    {pixelsToMetres(room.width).toFixed(2)}m x {pixelsToMetres(
+                      room.height
+                    ).toFixed(2)}m
+                  </text>
+                {/if}
+                {#if room.id === $editor.selectedRoomId}
+                  {#each resizeHandles(room) as item (item.handle)}
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <rect
+                      class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
+                      x={item.x - 5}
+                      y={item.y - 5}
+                      width="10"
+                      height="10"
+                      rx="2"
+                      vector-effect="non-scaling-stroke"
+                      onpointerdown={(event) =>
+                        handleResizePointerDown(event, room.id, item.handle)}
+                    />
+                  {/each}
+                {/if}
+              </g>
+            {/each}
+
+            {#each $editor.plan.walls as wall (wall.id)}
+              {#if !wall.removed}
+                {@const hitbox = wallHitbox(wall)}
+                <g
+                  role="button"
+                  tabindex="0"
+                  data-testid={wall.id}
+                  aria-label={wall.kind === 'shared'
+                    ? `Select shared wall between ${wall.roomIds.join(' and ')}`
+                    : wall.kind === 'custom'
+                      ? 'Select custom wall'
+                      : `Select exterior wall of ${wall.roomIds[0]}`}
+                  onpointerdown={(event) =>
+                    handleWallPointerDown(event, wall.id)}
+                  onclick={handleWallClick}
+                  onkeydown={(event) => handleWallKeydown(event, wall.id)}
+                >
+                  <rect
+                    class="cursor-pointer fill-black opacity-[0.01]"
+                    data-testid={wall.kind === 'custom'
+                      ? 'custom-wall-hitbox'
+                      : `${wall.id}-hitbox`}
+                    x={hitbox.x}
+                    y={hitbox.y}
+                    width={hitbox.width}
+                    height={hitbox.height}
+                  />
+                  <line
+                    class={`pointer-events-none ${
+                      wall.kind === 'exterior'
+                        ? 'stroke-[#4b5563]'
+                        : wall.structural
+                          ? 'stroke-[#7c2d12]'
+                          : 'stroke-[#111827]'
+                    } ${wall.id === $editor.selectedWallId ? 'stroke-[7]' : 'stroke-[5]'}`}
+                    x1={wall.x1}
+                    y1={wall.y1}
+                    x2={wall.x2}
+                    y2={wall.y2}
+                  />
+                  {#each wallOpenings(wall) as opening (opening.id)}
+                    {@const position = openingPosition(wall, opening)}
+                    <line
+                      class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
+                      x1={position.x1}
+                      y1={position.y1}
+                      x2={position.x2}
+                      y2={position.y2}
+                    />
+                    <line
+                      class="pointer-events-none stroke-[#0f766e] stroke-[2]"
+                      x1={position.x1}
+                      y1={position.y1}
+                      x2={position.x2}
+                      y2={position.y2}
+                    />
+                  {/each}
+                </g>
+              {/if}
+            {/each}
+            {#if wallDraft}
+              <line
+                class="pointer-events-none stroke-[#0f766e] stroke-[4] [stroke-dasharray:8_6]"
+                x1={wallDraft.x1}
+                y1={wallDraft.y1}
+                x2={wallDraft.x2}
+                y2={wallDraft.y2}
+              />
+            {/if}
+          </svg>
+        {/if}
       </div>
     </section>
   </main>

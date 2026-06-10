@@ -18,7 +18,7 @@ export type SetupRoomKind =
   | 'garage'
   | 'other';
 
-export type WallKind = 'shared' | 'exterior';
+export type WallKind = 'shared' | 'exterior' | 'custom';
 
 export type OpeningKind = 'door' | 'sliding-door' | 'opening' | 'window';
 
