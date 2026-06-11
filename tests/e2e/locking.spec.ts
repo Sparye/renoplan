@@ -10,6 +10,12 @@ test.beforeEach(async ({ page }) => {
 test('locks a baseline and creates a bounded renovation scenario', async ({
   page
 }) => {
+  await expect(page.getByText('Renoplan dashboard')).toBeVisible();
+  await page.getByRole('button', { name: 'New project' }).click();
+  await expect(page.getByText('Project details')).toBeVisible();
+  await page.getByLabel('Project name').fill('Kitchen renovation');
+  await page.getByRole('button', { name: 'Continue' }).click();
+
   await page.getByTestId('add-bedroom').click();
   await page.getByTestId('add-kitchen').click();
   await page.getByRole('button', { name: 'Continue' }).click();
@@ -24,7 +30,9 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await expect(page.getByLabel('Offset m')).toHaveValue('0.50');
 
   await page.getByRole('button', { name: 'Lock baseline' }).click();
-  await expect(page.getByText('Existing v1 · Locked baseline')).toBeVisible();
+  await expect(
+    page.getByText('Baseline · Locked existing layout')
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reset setup' })).toHaveCount(
     0
   );
@@ -49,10 +57,8 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   expect(afterLockBox?.x).toBeCloseTo(beforeLockBox.x, 1);
   expect(afterLockBox?.y).toBeCloseTo(beforeLockBox.y, 1);
 
-  await page.getByRole('button', { name: 'Create renovation plan' }).click();
-  await expect(
-    page.getByText('Renovation plan · Empty proposed layout')
-  ).toBeVisible();
+  await page.getByRole('button', { name: 'Create scenario' }).click();
+  await expect(page.getByText('Renovation 1 · Proposed layout')).toBeVisible();
   await expect(page.getByTestId('scenario-bounds')).toBeVisible();
   await expect(page.getByTestId('reference-bedroom-1')).toBeVisible();
   await expect(
@@ -71,7 +77,7 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await expect(
     page.getByRole('heading', { name: 'Proposed room' })
   ).toBeVisible();
-  await page.getByLabel('Name').fill('New ensuite');
+  await page.getByLabel('Room name').fill('New ensuite');
   await expect(
     page.getByRole('button', { name: 'Select proposed New ensuite' })
   ).toBeVisible();
@@ -85,9 +91,9 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
     name: 'Select proposed Bathroom 1'
   });
   await expect(proposedRoom).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Existing' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Baseline' })).toBeVisible();
   await expect(
-    page.getByRole('button', { name: 'Renovation', exact: true })
+    page.getByRole('button', { name: 'Renovation 1' })
   ).toBeVisible();
 
   const scenarioBox = await proposedRoom.boundingBox();
@@ -100,10 +106,25 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   expect(draggedBox?.x).toBeGreaterThanOrEqual(scenarioBox.x);
   expect(draggedBox?.x).toBeLessThan(900);
 
-  await page.getByRole('button', { name: 'Existing' }).click();
-  await expect(page.getByText('Existing v1 · Locked baseline')).toBeVisible();
-  await page.getByRole('button', { name: 'Renovation', exact: true }).click();
+  await page.getByRole('button', { name: 'Baseline' }).click();
   await expect(
-    page.getByText('Renovation plan · Empty proposed layout')
+    page.getByText('Baseline · Locked existing layout')
   ).toBeVisible();
+  await page.getByRole('button', { name: 'Renovation 1' }).click();
+  await expect(page.getByText('Renovation 1 · Proposed layout')).toBeVisible();
+
+  await page.getByRole('button', { name: 'All projects' }).click();
+  await expect(page.getByText('Renoplan dashboard')).toBeVisible();
+  await expect(page.getByText('Kitchen renovation')).toBeVisible();
+  await expect(page.getByText('Locked baseline · 1 scenarios')).toBeVisible();
+
+  await page.getByRole('button', { name: 'New project' }).click();
+  await expect(page.getByText('Project details')).toBeVisible();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByTestId('add-bedroom')).toBeVisible();
+  await page.getByRole('button', { name: 'Dashboard' }).click();
+  await expect(page.getByText('Renoplan dashboard')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Lock baseline' })).toHaveCount(
+    0
+  );
 });

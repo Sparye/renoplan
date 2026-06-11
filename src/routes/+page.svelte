@@ -2,15 +2,14 @@
   import {
     ArrowLeft,
     Check,
-    CopyPlus,
+    LayoutDashboard,
     Lock,
     Minus,
     Plus,
     Redo2,
     RotateCcw,
     Trash2,
-    Undo2,
-    Unlock
+    Undo2
   } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import {
@@ -103,12 +102,27 @@
   $: lockedBounds = $editor.lockedBaseline?.bounds ?? null;
   $: canEditGeometry = isScenarioMode || !isLockedBaseline;
   $: canEditWalls = isScenarioMode || !isLockedBaseline;
-  $: modeTitle = isScenarioMode ? 'Renovation plan' : 'Existing v1';
+  $: activeProject =
+    $editor.baselines.find(
+      (baseline) =>
+        baseline.id === ($editor.activeBaselineId ?? $editor.lockedBaseline?.id)
+    ) ?? null;
+  $: activeScenario =
+    activeProject?.scenarios.find(
+      (scenario) => scenario.id === $editor.activeScenarioId
+    ) ?? null;
+  $: projectTitle =
+    activeProject?.name ??
+    $editor.lockedBaseline?.name ??
+    $editor.draftProjectName;
+  $: modeTitle = isScenarioMode
+    ? (activeScenario?.name ?? 'Scenario')
+    : 'Baseline';
   $: modeSubtitle = isScenarioMode
-    ? 'Empty proposed layout'
+    ? 'Proposed layout'
     : isLockedBaseline
-      ? 'Locked baseline'
-      : 'Draft baseline';
+      ? 'Locked existing layout'
+      : 'Draft existing layout';
 
   function scheduleSaved() {
     clearTimeout(saveTimer);
@@ -475,25 +489,166 @@
   />
 </svelte:head>
 
-{#if $editor.setupStep !== 'editor'}
+{#if $editor.setupStep === 'dashboard'}
+  <main class="min-h-screen bg-[#f4f6f8] text-[#17202a]">
+    <section class="mx-auto grid max-w-6xl gap-7 px-6 py-10">
+      <header class="flex flex-wrap items-start justify-between gap-4">
+        <div class="grid gap-2">
+          <p
+            class="m-0 text-[0.78rem] font-bold tracking-normal text-[#6b7682] uppercase"
+          >
+            Renoplan dashboard
+          </p>
+          <h1
+            class="m-0 max-w-3xl text-[2rem] leading-[1.1] font-bold tracking-normal"
+          >
+            Renovation projects
+          </h1>
+        </div>
+        <button
+          class="inline-flex min-h-11 items-center gap-2 rounded-md bg-[#0f766e] px-4 text-sm font-bold text-white"
+          type="button"
+          onclick={() => editor.startNewBaseline()}
+        >
+          <Plus size={18} />
+          New project
+        </button>
+      </header>
+
+      {#if $editor.draftPlan && $editor.draftPlan.rooms.length > 0}
+        <section
+          class="grid gap-3 rounded-md border border-[#d8dee5] bg-white p-4"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="grid gap-1">
+              <h2 class="m-0 text-[1rem] font-bold tracking-normal">
+                Draft project
+              </h2>
+              <p class="m-0 text-sm text-[#66717e]">
+                {projectTitle} has {$editor.draftPlan.rooms.length} rooms waiting
+                to be locked.
+              </p>
+            </div>
+            <button
+              class="inline-flex min-h-10 items-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+              type="button"
+              onclick={() => editor.openDraftProject()}
+            >
+              Continue draft
+            </button>
+          </div>
+        </section>
+      {/if}
+
+      <section class="grid gap-3">
+        <h2 class="m-0 text-[1.1rem] font-bold tracking-normal">Projects</h2>
+        {#if $editor.baselines.length === 0}
+          <div
+            class="grid gap-3 rounded-md border border-[#d8dee5] bg-white p-5"
+          >
+            <h3 class="m-0 text-[1rem] font-bold tracking-normal">
+              No projects yet
+            </h3>
+            <p class="m-0 max-w-2xl text-sm leading-6 text-[#66717e]">
+              Create a project, capture the existing layout, then lock its
+              baseline before exploring renovation scenarios.
+            </p>
+          </div>
+        {:else}
+          <div
+            class="grid grid-cols-[repeat(auto-fit,minmax(280px,1fr))] gap-4"
+          >
+            {#each $editor.baselines as baseline (baseline.id)}
+              <article
+                class="grid gap-4 rounded-md border border-[#d8dee5] bg-white p-4"
+              >
+                <div class="grid gap-1">
+                  <h3 class="m-0 text-[1rem] font-bold tracking-normal">
+                    {baseline.name}
+                  </h3>
+                  <p class="m-0 text-sm text-[#66717e]">
+                    Locked baseline · {baseline.scenarios.length}
+                    scenarios
+                  </p>
+                </div>
+
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    class="inline-flex min-h-9 items-center gap-2 rounded-md bg-[#0f766e] px-3 text-sm font-bold text-white"
+                    type="button"
+                    onclick={() => editor.openBaseline(baseline.id)}
+                  >
+                    Open project
+                  </button>
+                </div>
+              </article>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    </section>
+  </main>
+{:else if $editor.setupStep !== 'editor'}
   <main class="min-h-screen bg-[#f4f6f8] text-[#17202a]">
     <section
       class="mx-auto grid min-h-screen max-w-5xl content-start gap-8 px-6 py-10"
     >
-      <header class="grid gap-3">
-        <p
-          class="m-0 text-[0.78rem] font-bold tracking-normal text-[#6b7682] uppercase"
+      <header class="flex flex-wrap items-start justify-between gap-4">
+        <div class="grid gap-3">
+          <p
+            class="m-0 text-[0.78rem] font-bold tracking-normal text-[#6b7682] uppercase"
+          >
+            Create project
+          </p>
+          <h1
+            class="m-0 max-w-3xl text-[2rem] leading-[1.1] font-bold tracking-normal"
+          >
+            Start with the project and its existing layout.
+          </h1>
+        </div>
+        <button
+          class="inline-flex min-h-10 items-center gap-2 rounded-md border border-[#c8d1dc] bg-white px-3 text-sm font-bold text-[#17202a]"
+          type="button"
+          onclick={() => editor.openDashboard()}
         >
-          Existing plan setup
-        </p>
-        <h1
-          class="m-0 max-w-3xl text-[2rem] leading-[1.1] font-bold tracking-normal"
-        >
-          Start with the rooms you already have.
-        </h1>
+          <LayoutDashboard size={17} />
+          Dashboard
+        </button>
       </header>
 
-      {#if $editor.setupStep === 'counts'}
+      {#if $editor.setupStep === 'project-details'}
+        <section class="grid max-w-xl gap-5">
+          <div class="grid gap-1">
+            <h2 class="m-0 text-[1.1rem] font-bold tracking-normal">
+              Project details
+            </h2>
+            <p class="m-0 text-sm text-[#5f6c7b]">
+              Name this renovation before capturing the existing layout.
+            </p>
+          </div>
+
+          <label class="grid gap-1 text-sm font-bold text-[#344153]">
+            Project name
+            <input
+              class="min-h-11 rounded-md border border-[#c8d1dc] bg-white px-3 text-[#17202a]"
+              value={$editor.draftProjectName}
+              oninput={(event) =>
+                editor.updateDraftProjectName(event.currentTarget.value)}
+            />
+          </label>
+
+          <div class="flex justify-end">
+            <button
+              class="inline-flex min-h-11 items-center gap-2 rounded-md bg-[#0f766e] px-4 text-sm font-bold text-white"
+              type="button"
+              onclick={() => editor.continueProjectDetails()}
+            >
+              <Check size={18} />
+              Continue
+            </button>
+          </div>
+        </section>
+      {:else if $editor.setupStep === 'counts'}
         <section class="grid gap-5">
           <div class="flex items-end justify-between gap-4">
             <div class="grid gap-1">
@@ -672,40 +827,118 @@
         <p
           class="mb-2 text-[0.78rem] font-bold tracking-normal text-[#6b7682] uppercase"
         >
-          {isScenarioMode ? 'Renovation editor' : 'Existing plan editor'}
+          {isLockedBaseline ? 'Project workspace' : 'Baseline creation'}
         </p>
         <h1 class="m-0 text-[1.35rem] leading-[1.2] font-bold tracking-normal">
-          {isScenarioMode
-            ? 'Explore changes inside the locked footprint'
-            : isLockedBaseline
-              ? 'Review your locked baseline'
-              : 'Arrange your measured rooms'}
+          {projectTitle}
         </h1>
       </div>
 
-      <section class="grid gap-3">
-        <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">
-          Setup summary
-        </h2>
-        <dl class="m-0 grid gap-[9px]">
-          <div class="flex items-baseline justify-between gap-4">
-            <dt class="text-[0.78rem] font-bold text-[#66717e] uppercase">
-              Rooms
-            </dt>
-            <dd class="m-0 text-sm font-bold text-[#17202a]">
-              {$editor.plan.rooms.length}
-            </dd>
+      {#if isLockedBaseline && activeProject}
+        <section class="grid gap-3">
+          <button
+            class="inline-flex min-h-10 items-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+            type="button"
+            onclick={() => editor.openDashboard()}
+          >
+            <LayoutDashboard size={17} />
+            All projects
+          </button>
+
+          <div class="grid gap-2">
+            <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">
+              Existing layout
+            </h2>
+            <button
+              class={`min-h-10 rounded-md px-3 text-left text-sm font-bold ${
+                isBaselineMode
+                  ? 'bg-[#17202a] text-white'
+                  : 'border border-[#d8dee5] bg-[#f8fafc] text-[#17202a]'
+              }`}
+              type="button"
+              onclick={() => editor.openBaseline(activeProject.id)}
+            >
+              Baseline
+            </button>
           </div>
-          <div class="flex items-baseline justify-between gap-4">
-            <dt class="text-[0.78rem] font-bold text-[#66717e] uppercase">
-              Measured
-            </dt>
-            <dd class="m-0 text-sm font-bold text-[#17202a]">
-              {measuredRooms}
-            </dd>
+
+          <div class="grid gap-2">
+            <div class="flex items-center justify-between gap-3">
+              <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">
+                Renovation scenarios
+              </h2>
+              {#if !isBaselineMode}
+                <button
+                  class="grid size-8 place-items-center rounded-md bg-[#0f766e] text-white"
+                  type="button"
+                  aria-label="Create scenario"
+                  onclick={() => {
+                    editor.createRenovationPlan();
+                    scheduleSaved();
+                  }}
+                >
+                  <Plus size={16} />
+                </button>
+              {/if}
+            </div>
+            {#if activeProject.scenarios.length === 0}
+              <p class="m-0 text-sm leading-6 text-[#66717e]">
+                Create a scenario when you are ready to explore changes.
+              </p>
+            {:else}
+              {#each activeProject.scenarios as scenario (scenario.id)}
+                <button
+                  class={`min-h-10 rounded-md px-3 text-left text-sm font-bold ${
+                    scenario.id === $editor.activeScenarioId
+                      ? 'bg-[#17202a] text-white'
+                      : 'border border-[#d8dee5] bg-[#f8fafc] text-[#17202a]'
+                  }`}
+                  type="button"
+                  onclick={() =>
+                    editor.openScenario(activeProject.id, scenario.id)}
+                >
+                  {scenario.name}
+                </button>
+              {/each}
+            {/if}
+            {#if isBaselineMode}
+              <button
+                class="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-[#0f766e] px-3 text-sm font-bold text-white"
+                type="button"
+                onclick={() => {
+                  editor.createRenovationPlan();
+                  scheduleSaved();
+                }}
+              >
+                <Plus size={16} />
+                Create scenario
+              </button>
+            {/if}
           </div>
-        </dl>
-        {#if !isLockedBaseline}
+        </section>
+      {:else}
+        <section class="grid gap-3">
+          <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">
+            Setup summary
+          </h2>
+          <dl class="m-0 grid gap-[9px]">
+            <div class="flex items-baseline justify-between gap-4">
+              <dt class="text-[0.78rem] font-bold text-[#66717e] uppercase">
+                Rooms
+              </dt>
+              <dd class="m-0 text-sm font-bold text-[#17202a]">
+                {$editor.plan.rooms.length}
+              </dd>
+            </div>
+            <div class="flex items-baseline justify-between gap-4">
+              <dt class="text-[0.78rem] font-bold text-[#66717e] uppercase">
+                Measured
+              </dt>
+              <dd class="m-0 text-sm font-bold text-[#17202a]">
+                {measuredRooms}
+              </dd>
+            </div>
+          </dl>
           <button
             class="inline-flex min-h-10 items-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
             type="button"
@@ -714,18 +947,30 @@
             <ArrowLeft size={17} />
             Edit setup
           </button>
-        {/if}
-      </section>
+        </section>
+      {/if}
 
       {#if isScenarioMode}
         <section class="grid gap-3">
           <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">
-            Renovation bounds
+            Scenario details
           </h2>
-          <p class="m-0 text-sm leading-6 text-[#66717e]">
-            Proposed rooms can overlap the reference background, but stay inside
-            the locked footprint.
-          </p>
+          {#if activeScenario}
+            <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+              Scenario name
+              <input
+                class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                value={activeScenario.name}
+                oninput={(event) => {
+                  editor.renameScenario(
+                    activeScenario.id,
+                    event.currentTarget.value
+                  );
+                  scheduleSaved();
+                }}
+              />
+            </label>
+          {/if}
           <label class="flex items-center gap-[7px] text-sm text-[#344153]">
             <input
               class="size-4"
@@ -739,15 +984,7 @@
             Reference background
           </label>
         </section>
-      {:else if isLockedBaseline}
-        <section class="grid gap-3">
-          <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">Next</h2>
-          <ol class="m-0 grid gap-2.5 pl-5 text-[#66717e]">
-            <li class="font-bold text-[#17202a]">Create a renovation plan</li>
-            <li>Switch between Existing and Renovation from the header</li>
-          </ol>
-        </section>
-      {:else}
+      {:else if !isLockedBaseline}
         <section class="grid gap-3">
           <h2 class="m-0 text-[0.92rem] font-bold tracking-normal">Next</h2>
           <ol class="m-0 grid gap-2.5 pl-5 text-[#66717e]">
@@ -799,7 +1036,7 @@
             </span>
           </div>
           <label class="grid gap-1 text-xs font-bold text-[#66717e]">
-            Name
+            Room name
             <input
               class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
               value={$selectedProposedRoom.name}
@@ -991,41 +1228,12 @@
         class="flex min-h-16 items-center justify-between gap-4 border-b border-[#d8dee5] bg-white px-5 py-3.5"
       >
         <div class="grid gap-[3px]">
-          <strong>My Renoplan Project</strong>
+          <strong>{projectTitle}</strong>
           <span class="text-[0.88rem] text-[#6b7682]"
             >{modeTitle} · {modeSubtitle}</span
           >
         </div>
         <div class="flex items-center gap-3.5">
-          {#if $editor.scenarioPlan}
-            <div
-              class="grid grid-cols-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] p-0.5"
-              aria-label="Plan mode"
-            >
-              <button
-                class={`min-h-8 rounded-[4px] px-3 text-sm font-bold ${
-                  isBaselineMode
-                    ? 'bg-white text-[#17202a] shadow-sm'
-                    : 'text-[#5f6c7b]'
-                }`}
-                type="button"
-                onclick={() => editor.switchMode('baseline')}
-              >
-                Existing
-              </button>
-              <button
-                class={`min-h-8 rounded-[4px] px-3 text-sm font-bold ${
-                  isScenarioMode
-                    ? 'bg-white text-[#17202a] shadow-sm'
-                    : 'text-[#5f6c7b]'
-                }`}
-                type="button"
-                onclick={() => editor.switchMode('scenario')}
-              >
-                Renovation
-              </button>
-            </div>
-          {/if}
           {#if !isLockedBaseline}
             <button
               class="inline-flex min-h-9 items-center gap-2 rounded-md bg-[#0f766e] px-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
@@ -1038,37 +1246,6 @@
             >
               <Lock size={16} />
               Lock baseline
-            </button>
-          {:else if isBaselineMode && !$editor.scenarioPlan}
-            <button
-              class="inline-flex min-h-9 items-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
-              type="button"
-              onclick={() => {
-                editor.unlockBaseline();
-                scheduleSaved();
-              }}
-            >
-              <Unlock size={16} />
-              Unlock
-            </button>
-            <button
-              class="inline-flex min-h-9 items-center gap-2 rounded-md bg-[#0f766e] px-3 text-sm font-bold text-white"
-              type="button"
-              onclick={() => {
-                editor.createRenovationPlan();
-                scheduleSaved();
-              }}
-            >
-              <CopyPlus size={16} />
-              Create renovation plan
-            </button>
-          {:else if isBaselineMode && $editor.scenarioPlan}
-            <button
-              class="inline-flex min-h-9 items-center gap-2 rounded-md bg-[#0f766e] px-3 text-sm font-bold text-white"
-              type="button"
-              onclick={() => editor.switchMode('scenario')}
-            >
-              Renovation plan
             </button>
           {/if}
           {#if isScenarioMode}
@@ -1160,7 +1337,7 @@
               type="button"
               aria-label="Reset setup"
               onclick={() => {
-                editor.resetLocalPlan();
+                editor.startNewBaseline();
                 scheduleSaved();
               }}
             >

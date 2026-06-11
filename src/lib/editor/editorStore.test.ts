@@ -111,6 +111,8 @@ describe('baseline locking', () => {
       height: 100
     });
     expect(state.lockedBaseline?.plan.rooms).toEqual(state.baselinePlan.rooms);
+    expect(state.baselines).toHaveLength(1);
+    expect(state.baselines[0].name).toBe('Untitled renovation');
   });
 
   it('unlocks before scenario creation by restoring the locked snapshot', () => {
@@ -187,6 +189,45 @@ describe('baseline locking', () => {
     expect(envelope.scenarioPlan).toBeNull();
     expect(envelope.activeMode).toBe('baseline');
   });
+
+  it('can start a new draft after a renovation scenario without losing the saved baseline', () => {
+    const storage = new MemoryStorage(JSON.stringify(samplePlan()));
+    const store = createEditorStore({
+      storage,
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.lockBaseline();
+    store.createRenovationPlan();
+    store.addProposedRoom('bathroom');
+    store.startNewBaseline();
+    const state = get(store);
+
+    expect(state.lockedBaseline).toBeNull();
+    expect(state.scenarioPlan).toBeNull();
+    expect(state.baselines).toHaveLength(1);
+    expect(state.baselines[0].scenarios).toHaveLength(1);
+    expect(state.baselinePlan.rooms).toEqual([]);
+    expect(state.activeMode).toBe('baseline');
+    expect(state.setupStep).toBe('project-details');
+    expect(parseEditorEnvelope(storage.value).baselines).toHaveLength(1);
+  });
+
+  it('loads saved baselines into the dashboard', () => {
+    const storage = new MemoryStorage(JSON.stringify(samplePlan()));
+    const store = createEditorStore({
+      storage,
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+    store.lockBaseline();
+
+    const reloaded = createEditorStore({ storage });
+    const state = get(reloaded);
+
+    expect(state.setupStep).toBe('dashboard');
+    expect(state.baselines).toHaveLength(1);
+    expect(state.baselines[0].scenarios).toEqual([]);
+  });
 });
 
 describe('scenario bounds and history', () => {
@@ -195,7 +236,11 @@ describe('scenario bounds and history', () => {
       storage: new MemoryStorage(JSON.stringify(samplePlan())),
       now: () => '2026-06-08T00:00:00.000Z',
       createId: (prefix) =>
-        prefix === 'proposed-room' ? 'proposed-room-1' : 'baseline-1'
+        prefix === 'proposed-room'
+          ? 'proposed-room-1'
+          : prefix === 'scenario'
+            ? 'scenario-1'
+            : 'baseline-1'
     });
 
     store.lockBaseline();
@@ -260,7 +305,11 @@ describe('scenario bounds and history', () => {
       storage: new MemoryStorage(JSON.stringify(samplePlan())),
       now: () => '2026-06-08T00:00:00.000Z',
       createId: (prefix) =>
-        prefix === 'proposed-room' ? 'proposed-room-1' : 'baseline-1'
+        prefix === 'proposed-room'
+          ? 'proposed-room-1'
+          : prefix === 'scenario'
+            ? 'scenario-1'
+            : 'baseline-1'
     });
 
     store.lockBaseline();
@@ -283,7 +332,7 @@ describe('scenario bounds and history', () => {
 
   it('moves, resizes, renames, deletes, and undoes proposed rooms', () => {
     let idIndex = 0;
-    const ids = ['baseline-1', 'proposed-room-1'];
+    const ids = ['baseline-1', 'scenario-1', 'proposed-room-1'];
     const store = createEditorStore({
       storage: new MemoryStorage(JSON.stringify(samplePlan())),
       now: () => '2026-06-08T00:00:00.000Z',
@@ -317,7 +366,12 @@ describe('scenario bounds and history', () => {
 
   it('keeps proposed rooms from overlapping each other', () => {
     let idIndex = 0;
-    const ids = ['baseline-1', 'proposed-room-1', 'proposed-room-2'];
+    const ids = [
+      'baseline-1',
+      'scenario-1',
+      'proposed-room-1',
+      'proposed-room-2'
+    ];
     const store = createEditorStore({
       storage: new MemoryStorage(JSON.stringify(samplePlan())),
       now: () => '2026-06-08T00:00:00.000Z',

@@ -30,20 +30,37 @@ export interface PlanBounds {
 
 export interface LockedBaseline {
   id: string;
-  name: 'Existing v1';
-  version: 1;
+  name: string;
+  version: number;
   locked: true;
   createdAt: string;
   bounds: PlanBounds;
   plan: PlanDocument;
 }
 
+export interface SavedScenario {
+  id: string;
+  name: string;
+  plan: PlanDocument;
+  showReferenceBackground: boolean;
+  updatedAt: string;
+}
+
+export interface SavedBaseline extends LockedBaseline {
+  scenarios: SavedScenario[];
+}
+
 export interface EditorEnvelope {
   version: 1;
+  draftProjectName: string;
   baselinePlan: PlanDocument;
+  draftPlan: PlanDocument | null;
   lockedBaseline: LockedBaseline | null;
   scenarioPlan: PlanDocument | null;
   showReferenceBackground: boolean;
+  baselines: SavedBaseline[];
+  activeBaselineId: string | null;
+  activeScenarioId: string | null;
   activeMode: ActiveMode;
 }
 
@@ -125,7 +142,12 @@ export const roomSetupOptions: {
   }
 ];
 
-export type SetupStep = 'counts' | 'measurements' | 'editor';
+export type SetupStep =
+  | 'dashboard'
+  | 'project-details'
+  | 'counts'
+  | 'measurements'
+  | 'editor';
 
 export interface EditorState extends EditorEnvelope {
   plan: PlanDocument;
@@ -505,8 +527,51 @@ function normalisePlan(plan: PlanDocument): PlanDocument {
   };
 }
 
+function normaliseSavedBaseline(baseline: SavedBaseline): SavedBaseline {
+  const plan = normalisePlan(baseline.plan);
+  return {
+    ...baseline,
+    bounds: derivePlanBounds(plan) ?? baseline.bounds,
+    plan,
+    scenarios: (baseline.scenarios ?? []).map((scenario) => ({
+      ...scenario,
+      plan: normalisePlan(scenario.plan),
+      showReferenceBackground: scenario.showReferenceBackground ?? true
+    }))
+  };
+}
+
+function upsertSavedBaseline(
+  baselines: SavedBaseline[],
+  baseline: LockedBaseline,
+  scenarios: SavedScenario[] = []
+) {
+  const existing = baselines.find((candidate) => candidate.id === baseline.id);
+  const nextBaseline = normaliseSavedBaseline({
+    ...baseline,
+    scenarios: existing?.scenarios ?? scenarios
+  });
+
+  return existing
+    ? baselines.map((candidate) =>
+        candidate.id === baseline.id ? nextBaseline : candidate
+      )
+    : [...baselines, nextBaseline];
+}
+
 function normaliseEnvelope(envelope: EditorEnvelope): EditorEnvelope {
-  const baselinePlan = normalisePlan(envelope.baselinePlan);
+  const draftProjectName =
+    typeof envelope.draftProjectName === 'string' &&
+    envelope.draftProjectName.trim().length > 0
+      ? envelope.draftProjectName
+      : 'Untitled renovation';
+  const draftPlan = envelope.draftPlan
+    ? normalisePlan(envelope.draftPlan)
+    : null;
+  const baselinePlan = normalisePlan(draftPlan ?? envelope.baselinePlan);
+  let baselines = ((envelope.baselines as SavedBaseline[] | undefined) ?? [])
+    .filter((baseline) => baseline?.locked)
+    .map(normaliseSavedBaseline);
   const lockedBaseline = envelope.lockedBaseline
     ? {
         ...envelope.lockedBaseline,
@@ -525,13 +590,37 @@ function normaliseEnvelope(envelope: EditorEnvelope): EditorEnvelope {
     JSON.stringify(scenarioPlan?.rooms) ===
       JSON.stringify(lockedBaseline?.plan.rooms);
   const nextScenarioPlan = scenarioIsLegacyBaselineCopy ? null : scenarioPlan;
+  const activeBaselineId =
+    envelope.activeBaselineId ?? lockedBaseline?.id ?? null;
+  const activeScenarioId = envelope.activeScenarioId ?? null;
+
+  if (lockedBaseline) {
+    const scenario =
+      nextScenarioPlan && activeScenarioId
+        ? [
+            {
+              id: activeScenarioId,
+              name: 'Renovation plan',
+              plan: nextScenarioPlan,
+              showReferenceBackground: envelope.showReferenceBackground ?? true,
+              updatedAt: new Date().toISOString()
+            }
+          ]
+        : [];
+    baselines = upsertSavedBaseline(baselines, lockedBaseline, scenario);
+  }
 
   return {
     version: ENVELOPE_VERSION,
+    draftProjectName,
     baselinePlan,
+    draftPlan,
     lockedBaseline,
     scenarioPlan: nextScenarioPlan,
     showReferenceBackground: envelope.showReferenceBackground ?? true,
+    baselines,
+    activeBaselineId,
+    activeScenarioId: nextScenarioPlan ? activeScenarioId : null,
     activeMode:
       envelope.activeMode === 'scenario' && nextScenarioPlan
         ? 'scenario'
@@ -569,10 +658,15 @@ function isEditorEnvelope(value: unknown): value is EditorEnvelope {
 export function createEnvelopeFromPlan(plan: PlanDocument): EditorEnvelope {
   return {
     version: ENVELOPE_VERSION,
+    draftProjectName: 'Untitled renovation',
     baselinePlan: normalisePlan(ensurePlanDocument(plan)),
+    draftPlan: null,
     lockedBaseline: null,
     scenarioPlan: null,
     showReferenceBackground: true,
+    baselines: [],
+    activeBaselineId: null,
+    activeScenarioId: null,
     activeMode: 'baseline'
   };
 }
@@ -641,10 +735,18 @@ function withComputedState(
 function envelopeFromState(state: EditorState): EditorEnvelope {
   return {
     version: ENVELOPE_VERSION,
+    draftProjectName: state.draftProjectName,
     baselinePlan: state.baselinePlan,
+    draftPlan:
+      !state.lockedBaseline && state.baselinePlan.rooms.length > 0
+        ? state.baselinePlan
+        : state.draftPlan,
     lockedBaseline: state.lockedBaseline,
     scenarioPlan: state.scenarioPlan,
     showReferenceBackground: state.showReferenceBackground,
+    baselines: state.baselines,
+    activeBaselineId: state.activeBaselineId,
+    activeScenarioId: state.activeScenarioId,
     activeMode: state.activeMode
   };
 }
@@ -792,6 +894,15 @@ function canEditWalls(state: EditorState) {
   return state.activeMode === 'scenario' || !state.lockedBaseline;
 }
 
+function projectName(name: string) {
+  const trimmed = name.trim();
+  return trimmed.length > 0 ? trimmed : 'Untitled renovation';
+}
+
+function scenarioName(index: number) {
+  return `Renovation ${index}`;
+}
+
 export type ResizeHandle = 'n' | 'e' | 's' | 'w' | 'ne' | 'se' | 'sw' | 'nw';
 
 export function createEditorStore(options: CreateEditorStoreOptions = {}) {
@@ -802,8 +913,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
   const store = writable<EditorState>(
     withComputedState({
       ...startingEnvelope,
-      setupStep:
-        startingEnvelope.baselinePlan.rooms.length > 0 ? 'editor' : 'counts',
+      setupStep: 'dashboard',
       inventory: [],
       selectedRoomId: null,
       selectedProposedRoomId: null,
@@ -825,6 +935,33 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
     store.update((state) => withComputedState(updater(state)));
   }
 
+  function syncActiveScenario(
+    state: EditorState,
+    plan: PlanDocument | null = state.scenarioPlan
+  ) {
+    if (!state.activeBaselineId || !state.activeScenarioId || !plan) {
+      return state.baselines;
+    }
+
+    return state.baselines.map((baseline) =>
+      baseline.id === state.activeBaselineId
+        ? {
+            ...baseline,
+            scenarios: baseline.scenarios.map((scenario) =>
+              scenario.id === state.activeScenarioId
+                ? {
+                    ...scenario,
+                    plan: clonePlan(plan),
+                    showReferenceBackground: state.showReferenceBackground,
+                    updatedAt: now()
+                  }
+                : scenario
+            )
+          }
+        : baseline
+    );
+  }
+
   function mutatePlan(
     updater: (plan: PlanDocument, state: EditorState) => PlanDocument,
     options: {
@@ -841,12 +978,19 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
 
       if (state.activeMode === 'scenario') {
         nextState.scenarioPlan = nextPlan;
+        nextState.baselines = syncActiveScenario(
+          nextState as EditorState,
+          nextPlan
+        );
         nextState.scenarioPast = options.history
           ? [...state.scenarioPast, clonePlan(previousPlan)].slice(-50)
           : state.scenarioPast;
         nextState.scenarioFuture = options.history ? [] : state.scenarioFuture;
       } else {
         nextState.baselinePlan = nextPlan;
+        if (!state.lockedBaseline) {
+          nextState.draftPlan = nextPlan;
+        }
         nextState.baselinePast = options.history
           ? [...state.baselinePast, clonePlan(previousPlan)].slice(-50)
           : state.baselinePast;
@@ -865,6 +1009,179 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
 
   return {
     subscribe: store.subscribe,
+    openDashboard() {
+      updateState((state) => {
+        const nextState = {
+          ...state,
+          setupStep: 'dashboard' as const,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: null
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
+    startNewBaseline() {
+      updateState((state) => {
+        const envelope = {
+          ...createEnvelopeFromPlan(emptyPlan),
+          baselines: state.baselines
+        };
+        const nextState = {
+          ...state,
+          ...envelope,
+          setupStep: 'project-details' as const,
+          inventory: [],
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: null,
+          baselinePast: [],
+          baselineFuture: [],
+          scenarioPast: [],
+          scenarioFuture: [],
+          saveState: 'saving' as const
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
+    updateDraftProjectName(name: string) {
+      updateState((state) => {
+        const nextState = {
+          ...state,
+          draftProjectName: name,
+          saveState: 'saving' as const
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
+    continueProjectDetails() {
+      updateState((state) => {
+        if (state.lockedBaseline) return state;
+
+        const nextState = {
+          ...state,
+          draftProjectName: projectName(state.draftProjectName),
+          setupStep: 'counts' as const,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: null,
+          saveState: 'saving' as const
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
+    openDraftProject() {
+      updateState((state) => {
+        if (!state.draftPlan || state.draftPlan.rooms.length === 0) {
+          return {
+            ...state,
+            setupStep: 'project-details' as const,
+            selectedRoomId: null,
+            selectedProposedRoomId: null,
+            selectedWallId: null
+          };
+        }
+
+        const nextState = {
+          ...state,
+          baselinePlan: clonePlan(state.draftPlan),
+          lockedBaseline: null,
+          scenarioPlan: null,
+          activeBaselineId: null,
+          activeScenarioId: null,
+          activeMode: 'baseline' as const,
+          setupStep: 'editor' as const,
+          selectedRoomId: state.draftPlan.rooms[0]?.id ?? null,
+          selectedProposedRoomId: null,
+          selectedWallId: null
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
+    openBaseline(baselineId: string) {
+      updateState((state) => {
+        const baseline = state.baselines.find(
+          (candidate) => candidate.id === baselineId
+        );
+        if (!baseline) return state;
+
+        const nextState = {
+          ...state,
+          baselinePlan: clonePlan(baseline.plan),
+          draftPlan: state.draftPlan,
+          lockedBaseline: {
+            id: baseline.id,
+            name: baseline.name,
+            version: baseline.version,
+            locked: true as const,
+            createdAt: baseline.createdAt,
+            bounds: baseline.bounds,
+            plan: clonePlan(baseline.plan)
+          },
+          scenarioPlan: null,
+          showReferenceBackground: true,
+          activeBaselineId: baseline.id,
+          activeScenarioId: null,
+          activeMode: 'baseline' as const,
+          setupStep: 'editor' as const,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: null,
+          baselinePast: [],
+          baselineFuture: [],
+          scenarioPast: [],
+          scenarioFuture: []
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
+    openScenario(baselineId: string, scenarioId: string) {
+      updateState((state) => {
+        const baseline = state.baselines.find(
+          (candidate) => candidate.id === baselineId
+        );
+        const scenario = baseline?.scenarios.find(
+          (candidate) => candidate.id === scenarioId
+        );
+        if (!baseline || !scenario) return state;
+
+        const nextState = {
+          ...state,
+          baselinePlan: clonePlan(baseline.plan),
+          draftPlan: state.draftPlan,
+          lockedBaseline: {
+            id: baseline.id,
+            name: baseline.name,
+            version: baseline.version,
+            locked: true as const,
+            createdAt: baseline.createdAt,
+            bounds: baseline.bounds,
+            plan: clonePlan(baseline.plan)
+          },
+          scenarioPlan: clonePlan(scenario.plan),
+          showReferenceBackground: scenario.showReferenceBackground,
+          activeBaselineId: baseline.id,
+          activeScenarioId: scenario.id,
+          activeMode: 'scenario' as const,
+          setupStep: 'editor' as const,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: null,
+          baselinePast: [],
+          baselineFuture: [],
+          scenarioPast: [],
+          scenarioFuture: []
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
     createInventory(counts: Record<SetupRoomKind, number>) {
       updateState((state) => {
         if (state.lockedBaseline) return state;
@@ -917,6 +1234,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         const nextState = {
           ...state,
           baselinePlan: plan,
+          draftPlan: plan,
           activeMode: 'baseline' as const,
           setupStep: 'editor' as const,
           selectedRoomId: plan.rooms[0]?.id ?? null,
@@ -955,19 +1273,25 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         const plan = normalisePlan(state.baselinePlan);
         const bounds = derivePlanBounds(plan);
         if (!bounds) return state;
+        const baselineId = makeId('baseline');
+        const lockedBaseline: LockedBaseline = {
+          id: baselineId,
+          name: projectName(state.draftProjectName),
+          version: state.baselines.length + 1,
+          locked: true,
+          createdAt: now(),
+          bounds,
+          plan: clonePlan(plan)
+        };
 
         const nextState = {
           ...state,
           baselinePlan: plan,
-          lockedBaseline: {
-            id: makeId('baseline'),
-            name: 'Existing v1' as const,
-            version: 1 as const,
-            locked: true as const,
-            createdAt: now(),
-            bounds,
-            plan: clonePlan(plan)
-          },
+          draftPlan: null,
+          lockedBaseline,
+          baselines: upsertSavedBaseline(state.baselines, lockedBaseline),
+          activeBaselineId: baselineId,
+          activeScenarioId: null,
           selectedRoomId: null,
           selectedProposedRoomId: null,
           selectedWallId: null,
@@ -1000,19 +1324,71 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
     },
     createRenovationPlan() {
       updateState((state) => {
-        if (!state.lockedBaseline || state.scenarioPlan) return state;
+        if (!state.lockedBaseline) return state;
 
+        const scenarioId = makeId('scenario');
         const plan = emptyScenarioPlan();
+        const scenarioCount =
+          state.baselines.find(
+            (baseline) => baseline.id === state.lockedBaseline?.id
+          )?.scenarios.length ?? 0;
+        const scenario: SavedScenario = {
+          id: scenarioId,
+          name: scenarioName(scenarioCount + 1),
+          plan: normalisePlan(plan),
+          showReferenceBackground: true,
+          updatedAt: now()
+        };
         const nextState = {
           ...state,
-          scenarioPlan: normalisePlan(plan),
+          scenarioPlan: scenario.plan,
           showReferenceBackground: true,
+          baselines: state.baselines.map((baseline) =>
+            baseline.id === state.lockedBaseline?.id
+              ? {
+                  ...baseline,
+                  scenarios: [...baseline.scenarios, scenario]
+                }
+              : baseline
+          ),
+          activeBaselineId: state.lockedBaseline.id,
+          activeScenarioId: scenarioId,
           activeMode: 'scenario' as const,
           selectedRoomId: null,
           selectedProposedRoomId: null,
           selectedWallId: null,
           scenarioPast: [],
           scenarioFuture: [],
+          saveState: 'saving' as const
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
+    renameScenario(scenarioId: string, name: string) {
+      updateState((state) => {
+        if (!state.activeBaselineId) return state;
+
+        const trimmed = name.trim();
+        const scenarioName = trimmed.length > 0 ? trimmed : 'Untitled scenario';
+        const nextState = {
+          ...state,
+          baselines: state.baselines.map((baseline) =>
+            baseline.id === state.activeBaselineId
+              ? {
+                  ...baseline,
+                  scenarios: baseline.scenarios.map((scenario) =>
+                    scenario.id === scenarioId
+                      ? {
+                          ...scenario,
+                          name: scenarioName,
+                          updatedAt: now()
+                        }
+                      : scenario
+                  )
+                }
+              : baseline
+          ),
           saveState: 'saving' as const
         };
         saveState(nextState);
@@ -1030,6 +1406,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
           showReferenceBackground: !state.showReferenceBackground,
           saveState: 'saving' as const
         };
+        nextState.baselines = syncActiveScenario(nextState as EditorState);
         saveState(nextState);
         return nextState;
       });
@@ -1462,6 +1839,10 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
 
         if (state.activeMode === 'scenario') {
           nextState.scenarioPlan = plan;
+          nextState.baselines = syncActiveScenario(
+            nextState as EditorState,
+            plan
+          );
           nextState.scenarioPast = state.scenarioPast.slice(0, -1);
           nextState.scenarioFuture = [
             clonePlan(currentPlan),
@@ -1497,6 +1878,10 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
 
         if (state.activeMode === 'scenario') {
           nextState.scenarioPlan = plan;
+          nextState.baselines = syncActiveScenario(
+            nextState as EditorState,
+            plan
+          );
           nextState.scenarioPast = [
             ...state.scenarioPast,
             clonePlan(currentPlan)
@@ -1520,9 +1905,11 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
     },
     resetLocalPlan() {
       updateState((state) => {
-        if (state.lockedBaseline) return state;
-
-        const envelope = createEnvelopeFromPlan(emptyPlan);
+        const envelope = {
+          ...createEnvelopeFromPlan(emptyPlan),
+          baselines: state.baselines,
+          draftPlan: null
+        };
         const nextState = {
           ...state,
           ...envelope,
