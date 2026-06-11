@@ -102,6 +102,7 @@ export interface Scenario {
   baselineId: string;
   name: string;
   plan: PlanDocument;
+  showReferenceBackground: boolean;
   updatedAt: string;
 }
 

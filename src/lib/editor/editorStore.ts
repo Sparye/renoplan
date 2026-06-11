@@ -43,6 +43,7 @@ export interface EditorEnvelope {
   baselinePlan: PlanDocument;
   lockedBaseline: LockedBaseline | null;
   scenarioPlan: PlanDocument | null;
+  showReferenceBackground: boolean;
   activeMode: ActiveMode;
 }
 
@@ -59,6 +60,15 @@ const emptyPlan: PlanDocument = {
   openings: [],
   objects: []
 };
+
+const emptyScenarioPlan = (): PlanDocument => ({
+  id: 'renovation-plan',
+  rooms: [],
+  proposedRooms: [],
+  walls: [],
+  openings: [],
+  objects: []
+});
 
 export const roomSetupOptions: {
   kind: SetupRoomKind;
@@ -497,9 +507,6 @@ function normalisePlan(plan: PlanDocument): PlanDocument {
 
 function normaliseEnvelope(envelope: EditorEnvelope): EditorEnvelope {
   const baselinePlan = normalisePlan(envelope.baselinePlan);
-  const scenarioPlan = envelope.scenarioPlan
-    ? normalisePlan(envelope.scenarioPlan)
-    : null;
   const lockedBaseline = envelope.lockedBaseline
     ? {
         ...envelope.lockedBaseline,
@@ -509,14 +516,24 @@ function normaliseEnvelope(envelope: EditorEnvelope): EditorEnvelope {
         plan: normalisePlan(envelope.lockedBaseline.plan)
       }
     : null;
+  const scenarioPlan = envelope.scenarioPlan
+    ? normalisePlan(envelope.scenarioPlan)
+    : null;
+  const scenarioIsLegacyBaselineCopy =
+    Boolean(lockedBaseline && scenarioPlan) &&
+    scenarioPlan?.proposedRooms.length === 0 &&
+    JSON.stringify(scenarioPlan?.rooms) ===
+      JSON.stringify(lockedBaseline?.plan.rooms);
+  const nextScenarioPlan = scenarioIsLegacyBaselineCopy ? null : scenarioPlan;
 
   return {
     version: ENVELOPE_VERSION,
     baselinePlan,
     lockedBaseline,
-    scenarioPlan,
+    scenarioPlan: nextScenarioPlan,
+    showReferenceBackground: envelope.showReferenceBackground ?? true,
     activeMode:
-      envelope.activeMode === 'scenario' && scenarioPlan
+      envelope.activeMode === 'scenario' && nextScenarioPlan
         ? 'scenario'
         : 'baseline'
   };
@@ -555,6 +572,7 @@ export function createEnvelopeFromPlan(plan: PlanDocument): EditorEnvelope {
     baselinePlan: normalisePlan(ensurePlanDocument(plan)),
     lockedBaseline: null,
     scenarioPlan: null,
+    showReferenceBackground: true,
     activeMode: 'baseline'
   };
 }
@@ -626,6 +644,7 @@ function envelopeFromState(state: EditorState): EditorEnvelope {
     baselinePlan: state.baselinePlan,
     lockedBaseline: state.lockedBaseline,
     scenarioPlan: state.scenarioPlan,
+    showReferenceBackground: state.showReferenceBackground,
     activeMode: state.activeMode
   };
 }
@@ -653,6 +672,51 @@ function clampRectToBounds(rect: PlanRect, bounds: PlanBounds | null) {
     width,
     height
   };
+}
+
+function rectsOverlap(first: PlanRect, second: PlanRect) {
+  return (
+    first.x < second.x + second.width &&
+    first.x + first.width > second.x &&
+    first.y < second.y + second.height &&
+    first.y + first.height > second.y
+  );
+}
+
+function clampProposedRect(
+  rect: PlanRect,
+  roomId: string,
+  rooms: ProposedRoom[],
+  bounds: PlanBounds | null
+) {
+  const candidate = clampRectToBounds(rect, bounds);
+  const otherRooms = rooms.filter((room) => room.id !== roomId);
+
+  for (let attempt = 0; attempt < otherRooms.length; attempt += 1) {
+    const overlapRoom = otherRooms.find((room) =>
+      rectsOverlap(candidate, room)
+    );
+    if (!overlapRoom) return candidate;
+
+    const candidates = [
+      { ...candidate, x: overlapRoom.x - candidate.width },
+      { ...candidate, x: overlapRoom.x + overlapRoom.width },
+      { ...candidate, y: overlapRoom.y - candidate.height },
+      { ...candidate, y: overlapRoom.y + overlapRoom.height }
+    ]
+      .map((next) => clampRectToBounds(next, bounds))
+      .filter((next) => otherRooms.every((room) => !rectsOverlap(next, room)))
+      .sort(
+        (first, second) =>
+          (first.x - rect.x) ** 2 +
+          (first.y - rect.y) ** 2 -
+          ((second.x - rect.x) ** 2 + (second.y - rect.y) ** 2)
+      );
+
+    if (candidates[0]) return candidates[0];
+  }
+
+  return candidate;
 }
 
 function resizeRect(
@@ -938,19 +1002,32 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
       updateState((state) => {
         if (!state.lockedBaseline || state.scenarioPlan) return state;
 
-        const plan = {
-          ...clonePlan(state.lockedBaseline.plan),
-          id: 'renovation-plan'
-        };
+        const plan = emptyScenarioPlan();
         const nextState = {
           ...state,
           scenarioPlan: normalisePlan(plan),
+          showReferenceBackground: true,
           activeMode: 'scenario' as const,
           selectedRoomId: null,
           selectedProposedRoomId: null,
           selectedWallId: null,
           scenarioPast: [],
           scenarioFuture: [],
+          saveState: 'saving' as const
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
+    toggleReferenceBackground() {
+      updateState((state) => {
+        if (state.activeMode !== 'scenario' || !state.scenarioPlan) {
+          return state;
+        }
+
+        const nextState = {
+          ...state,
+          showReferenceBackground: !state.showReferenceBackground,
           saveState: 'saving' as const
         };
         saveState(nextState);
@@ -1094,13 +1171,15 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
             id: roomId,
             name: proposedRoomLabel(plan, kind),
             type: option.type,
-            ...clampRectToBounds(
+            ...clampProposedRect(
               {
                 x: snapValue(bounds.x + (bounds.width - width) / 2),
                 y: snapValue(bounds.y + (bounds.height - height) / 2),
                 width,
                 height
               },
+              roomId,
+              plan.proposedRooms,
               bounds
             )
           };
@@ -1135,12 +1214,14 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
               room.id === roomId
                 ? {
                     ...room,
-                    ...clampRectToBounds(
+                    ...clampProposedRect(
                       {
                         ...room,
                         x: snapValue(x, state.snapToGrid),
                         y: snapValue(y, state.snapToGrid)
                       },
+                      room.id,
+                      plan.proposedRooms,
                       bounds
                     )
                   }
@@ -1174,13 +1255,15 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
               room.id === roomId
                 ? {
                     ...room,
-                    ...clampRectToBounds(
+                    ...clampProposedRect(
                       resizeRect(
                         room,
                         handle,
                         snapValue(x, state.snapToGrid),
                         snapValue(y, state.snapToGrid)
                       ),
+                      room.id,
+                      plan.proposedRooms,
                       bounds
                     )
                   }
@@ -1212,7 +1295,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
                 ? {
                     ...room,
                     ...patch,
-                    ...clampRectToBounds(
+                    ...clampProposedRect(
                       {
                         ...room,
                         width: Math.max(
@@ -1224,6 +1307,8 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
                           patch.height ?? room.height
                         )
                       },
+                      room.id,
+                      plan.proposedRooms,
                       bounds
                     )
                   }

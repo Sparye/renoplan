@@ -51,16 +51,26 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
 
   await page.getByRole('button', { name: 'Create renovation plan' }).click();
   await expect(
-    page.getByText('Renovation plan · Editable renovation copy')
+    page.getByText('Renovation plan · Empty proposed layout')
   ).toBeVisible();
   await expect(page.getByTestId('scenario-bounds')).toBeVisible();
+  await expect(page.getByTestId('reference-bedroom-1')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Select Bedroom' })
+  ).toHaveCount(0);
+  await page.getByLabel('Reference background').uncheck();
+  await expect(page.getByTestId('reference-bedroom-1')).toHaveCount(0);
+  await expect(page.getByTestId('scenario-bounds')).toBeVisible();
+  await page.getByLabel('Reference background').check();
   await expect(page.getByRole('button', { name: 'Add wall' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Add room' }).click();
   await page.getByRole('menuitem', { name: 'Bathroom' }).click();
   await expect(
     page.getByRole('button', { name: 'Select proposed Bathroom 1' })
   ).toBeVisible();
-  await expect(page.getByText('Proposed room')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Proposed room' })
+  ).toBeVisible();
   await page.getByLabel('Name').fill('New ensuite');
   await expect(
     page.getByRole('button', { name: 'Select proposed New ensuite' })
@@ -69,18 +79,24 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await expect(
     page.getByRole('button', { name: 'Select proposed New ensuite' })
   ).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add room' }).click();
+  await page.getByRole('menuitem', { name: 'Bathroom' }).click();
+  const proposedRoom = page.getByRole('button', {
+    name: 'Select proposed Bathroom 1'
+  });
+  await expect(proposedRoom).toBeVisible();
   await expect(page.getByRole('button', { name: 'Existing' })).toBeVisible();
   await expect(
     page.getByRole('button', { name: 'Renovation', exact: true })
   ).toBeVisible();
 
-  const scenarioBox = await bedroom.boundingBox();
-  if (!scenarioBox) throw new Error('Scenario bedroom was not rendered');
+  const scenarioBox = await proposedRoom.boundingBox();
+  if (!scenarioBox) throw new Error('Proposed room was not rendered');
   const canvas = page.getByRole('application', { name: /Floor plan canvas/ });
-  await bedroom.dragTo(canvas, {
+  await proposedRoom.dragTo(canvas, {
     targetPosition: { x: 900, y: 500 }
   });
-  const draggedBox = await bedroom.boundingBox();
+  const draggedBox = await proposedRoom.boundingBox();
   expect(draggedBox?.x).toBeGreaterThanOrEqual(scenarioBox.x);
   expect(draggedBox?.x).toBeLessThan(900);
 
@@ -88,6 +104,6 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await expect(page.getByText('Existing v1 · Locked baseline')).toBeVisible();
   await page.getByRole('button', { name: 'Renovation', exact: true }).click();
   await expect(
-    page.getByText('Renovation plan · Editable renovation copy')
+    page.getByText('Renovation plan · Empty proposed layout')
   ).toBeVisible();
 });

@@ -105,7 +105,7 @@
   $: canEditWalls = isScenarioMode || !isLockedBaseline;
   $: modeTitle = isScenarioMode ? 'Renovation plan' : 'Existing v1';
   $: modeSubtitle = isScenarioMode
-    ? 'Editable renovation copy'
+    ? 'Empty proposed layout'
     : isLockedBaseline
       ? 'Locked baseline'
       : 'Draft baseline';
@@ -723,9 +723,21 @@
             Renovation bounds
           </h2>
           <p class="m-0 text-sm leading-6 text-[#66717e]">
-            Rooms can move and resize, but they stay inside the locked existing
-            footprint.
+            Proposed rooms can overlap the reference background, but stay inside
+            the locked footprint.
           </p>
+          <label class="flex items-center gap-[7px] text-sm text-[#344153]">
+            <input
+              class="size-4"
+              type="checkbox"
+              checked={$editor.showReferenceBackground}
+              onchange={() => {
+                editor.toggleReferenceBackground();
+                scheduleSaved();
+              }}
+            />
+            Reference background
+          </label>
         </section>
       {:else if isLockedBaseline}
         <section class="grid gap-3">
@@ -1429,20 +1441,11 @@
               />
             {/if}
 
-            {#each $editor.plan.rooms as room (room.id)}
-              <g
-                role="button"
-                tabindex="0"
-                aria-label={`Select ${room.name}`}
-                onpointerdown={(event) => handleRoomPointerDown(event, room)}
-                onclick={handleRoomClick}
-                onkeydown={(event) => handleRoomKeydown(event, room.id)}
-              >
+            {#if isScenarioMode && $editor.showReferenceBackground}
+              {#each $editor.baselinePlan.rooms as room (room.id)}
                 <rect
-                  class="cursor-move {roomFillClasses[room.type]} {room.id ===
-                  $editor.selectedRoomId
-                    ? 'stroke-[#0f766e] stroke-[4]'
-                    : 'stroke-[#1d2733] stroke-[3]'}"
+                  class={`${roomFillClasses[room.type]} pointer-events-none opacity-25 stroke-[#5f6c7b] stroke-[1]`}
+                  data-testid={`reference-${room.id}`}
                   x={room.x}
                   y={room.y}
                   width={room.width}
@@ -1450,99 +1453,127 @@
                   rx="2"
                   vector-effect="non-scaling-stroke"
                 />
-                <text
-                  class="pointer-events-none select-none fill-[#1d2733] text-base font-bold"
-                  x={room.x + 14}
-                  y={room.y + 28}
-                >
-                  {room.name}
-                </text>
-                {#if room.id === $editor.selectedRoomId}
-                  <text
-                    class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
-                    x={room.x + 14}
-                    y={room.y + room.height - 16}
-                  >
-                    {pixelsToMetres(room.width).toFixed(2)}m x {pixelsToMetres(
-                      room.height
-                    ).toFixed(2)}m
-                  </text>
-                {/if}
-                {#if room.id === $editor.selectedRoomId}
-                  {#each resizeHandles(room) as item (item.handle)}
-                    <!-- svelte-ignore a11y_no_static_element_interactions -->
-                    <rect
-                      class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
-                      x={item.x - 5}
-                      y={item.y - 5}
-                      width="10"
-                      height="10"
-                      rx="2"
-                      vector-effect="non-scaling-stroke"
-                      onpointerdown={(event) =>
-                        handleResizePointerDown(event, room.id, item.handle)}
-                    />
-                  {/each}
-                {/if}
-              </g>
-            {/each}
+              {/each}
+            {/if}
 
-            {#each $editor.plan.walls as wall (wall.id)}
-              {#if !wall.removed}
-                {@const hitbox = wallHitbox(wall)}
+            {#if !isScenarioMode}
+              {#each $editor.plan.rooms as room (room.id)}
                 <g
                   role="button"
                   tabindex="0"
-                  data-testid={wall.id}
-                  aria-label={wall.kind === 'shared'
-                    ? `Select shared wall between ${wall.roomIds.join(' and ')}`
-                    : `Select exterior wall of ${wall.roomIds[0]}`}
-                  onpointerdown={(event) =>
-                    handleWallPointerDown(event, wall.id)}
-                  onclick={handleWallClick}
-                  onkeydown={(event) => handleWallKeydown(event, wall.id)}
+                  aria-label={`Select ${room.name}`}
+                  onpointerdown={(event) => handleRoomPointerDown(event, room)}
+                  onclick={handleRoomClick}
+                  onkeydown={(event) => handleRoomKeydown(event, room.id)}
                 >
                   <rect
-                    class="cursor-pointer fill-black opacity-[0.01]"
-                    data-testid={`${wall.id}-hitbox`}
-                    x={hitbox.x}
-                    y={hitbox.y}
-                    width={hitbox.width}
-                    height={hitbox.height}
+                    class="cursor-move {roomFillClasses[room.type]} {room.id ===
+                    $editor.selectedRoomId
+                      ? 'stroke-[#0f766e] stroke-[4]'
+                      : 'stroke-[#1d2733] stroke-[3]'}"
+                    x={room.x}
+                    y={room.y}
+                    width={room.width}
+                    height={room.height}
+                    rx="2"
+                    vector-effect="non-scaling-stroke"
                   />
-                  <line
-                    class={`pointer-events-none ${
-                      wall.kind === 'exterior'
-                        ? 'stroke-[#4b5563]'
-                        : wall.structural
-                          ? 'stroke-[#7c2d12]'
-                          : 'stroke-[#111827]'
-                    } ${wall.id === $editor.selectedWallId ? 'stroke-[7]' : 'stroke-[5]'}`}
-                    x1={wall.x1}
-                    y1={wall.y1}
-                    x2={wall.x2}
-                    y2={wall.y2}
-                  />
-                  {#each wallOpenings(wall) as opening (opening.id)}
-                    {@const position = openingPosition(wall, opening)}
-                    <line
-                      class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
-                      x1={position.x1}
-                      y1={position.y1}
-                      x2={position.x2}
-                      y2={position.y2}
-                    />
-                    <line
-                      class="pointer-events-none stroke-[#0f766e] stroke-[2]"
-                      x1={position.x1}
-                      y1={position.y1}
-                      x2={position.x2}
-                      y2={position.y2}
-                    />
-                  {/each}
+                  <text
+                    class="pointer-events-none select-none fill-[#1d2733] text-base font-bold"
+                    x={room.x + 14}
+                    y={room.y + 28}
+                  >
+                    {room.name}
+                  </text>
+                  {#if room.id === $editor.selectedRoomId}
+                    <text
+                      class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
+                      x={room.x + 14}
+                      y={room.y + room.height - 16}
+                    >
+                      {pixelsToMetres(room.width).toFixed(2)}m x {pixelsToMetres(
+                        room.height
+                      ).toFixed(2)}m
+                    </text>
+                  {/if}
+                  {#if room.id === $editor.selectedRoomId}
+                    {#each resizeHandles(room) as item (item.handle)}
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <rect
+                        class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
+                        x={item.x - 5}
+                        y={item.y - 5}
+                        width="10"
+                        height="10"
+                        rx="2"
+                        vector-effect="non-scaling-stroke"
+                        onpointerdown={(event) =>
+                          handleResizePointerDown(event, room.id, item.handle)}
+                      />
+                    {/each}
+                  {/if}
                 </g>
-              {/if}
-            {/each}
+              {/each}
+            {/if}
+
+            {#if !isScenarioMode}
+              {#each $editor.plan.walls as wall (wall.id)}
+                {#if !wall.removed}
+                  {@const hitbox = wallHitbox(wall)}
+                  <g
+                    role="button"
+                    tabindex="0"
+                    data-testid={wall.id}
+                    aria-label={wall.kind === 'shared'
+                      ? `Select shared wall between ${wall.roomIds.join(' and ')}`
+                      : `Select exterior wall of ${wall.roomIds[0]}`}
+                    onpointerdown={(event) =>
+                      handleWallPointerDown(event, wall.id)}
+                    onclick={handleWallClick}
+                    onkeydown={(event) => handleWallKeydown(event, wall.id)}
+                  >
+                    <rect
+                      class="cursor-pointer fill-black opacity-[0.01]"
+                      data-testid={`${wall.id}-hitbox`}
+                      x={hitbox.x}
+                      y={hitbox.y}
+                      width={hitbox.width}
+                      height={hitbox.height}
+                    />
+                    <line
+                      class={`pointer-events-none ${
+                        wall.kind === 'exterior'
+                          ? 'stroke-[#4b5563]'
+                          : wall.structural
+                            ? 'stroke-[#7c2d12]'
+                            : 'stroke-[#111827]'
+                      } ${wall.id === $editor.selectedWallId ? 'stroke-[7]' : 'stroke-[5]'}`}
+                      x1={wall.x1}
+                      y1={wall.y1}
+                      x2={wall.x2}
+                      y2={wall.y2}
+                    />
+                    {#each wallOpenings(wall) as opening (opening.id)}
+                      {@const position = openingPosition(wall, opening)}
+                      <line
+                        class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
+                        x1={position.x1}
+                        y1={position.y1}
+                        x2={position.x2}
+                        y2={position.y2}
+                      />
+                      <line
+                        class="pointer-events-none stroke-[#0f766e] stroke-[2]"
+                        x1={position.x1}
+                        y1={position.y1}
+                        x2={position.x2}
+                        y2={position.y2}
+                      />
+                    {/each}
+                  </g>
+                {/if}
+              {/each}
+            {/if}
 
             {#if isScenarioMode}
               {#each $editor.plan.proposedRooms as room (room.id)}
