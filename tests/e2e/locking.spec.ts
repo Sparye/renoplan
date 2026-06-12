@@ -40,6 +40,34 @@ test('selects and resizes rooms while configuring an unlocked baseline', async (
   await expect(inspector.getByText('2.25m x 1.50m')).toBeVisible();
 });
 
+test('scales the canvas viewport for a large measured room', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByTestId('add-bedroom').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByLabel('Width m').fill('6');
+  await page.getByLabel('Depth m').fill('13.4');
+  await page.getByRole('button', { name: 'Create plan' }).click();
+
+  const canvas = page.getByRole('application', {
+    name: 'Floor plan canvas. Drag room blocks to arrange the existing plan.'
+  });
+  const bedroom = page.getByRole('button', { name: 'Select Bedroom' });
+
+  await expect(bedroom).toBeVisible();
+  await expect(canvas).toHaveAttribute('viewBox', '0 0 1008 1392');
+
+  const canvasBox = await canvas.boundingBox();
+  const bedroomBox = await bedroom.boundingBox();
+  if (!canvasBox || !bedroomBox) throw new Error('Canvas did not render');
+
+  expect(bedroomBox.y + bedroomBox.height).toBeLessThanOrEqual(
+    canvasBox.y + canvasBox.height + 1
+  );
+});
+
 test('locks a baseline and creates a bounded renovation scenario', async ({
   page
 }) => {

@@ -22,7 +22,7 @@
     selectedRoom,
     selectedWall
   } from '$lib/editor/editorStore';
-  import type { ResizeHandle } from '$lib/editor/editorStore';
+  import type { PlanBounds, ResizeHandle } from '$lib/editor/editorStore';
   import type {
     Opening,
     PlanRect,
@@ -34,6 +34,7 @@
 
   const CANVAS_WIDTH = 960;
   const CANVAS_HEIGHT = 620;
+  const CANVAS_PADDING = GRID_SIZE * 2;
 
   let canvas: SVGSVGElement;
   let interaction:
@@ -100,6 +101,14 @@
   $: isScenarioMode = $editor.activeMode === 'scenario';
   $: isLockedBaseline = Boolean($editor.lockedBaseline);
   $: lockedBounds = $editor.lockedBaseline?.bounds ?? null;
+  $: canvasViewport = canvasViewportFor(
+    [
+      ...$editor.plan.rooms,
+      ...$editor.plan.proposedRooms,
+      ...(isScenarioMode ? $editor.baselinePlan.rooms : [])
+    ],
+    lockedBounds
+  );
   $: canEditGeometry = isScenarioMode || !isLockedBaseline;
   $: canEditWalls = isScenarioMode || !isLockedBaseline;
   $: activeProject =
@@ -179,6 +188,36 @@
     if (!Number.isFinite(metres)) return null;
 
     return (metres / 0.25) * GRID_SIZE;
+  }
+
+  function canvasViewportFor(
+    rects: PlanRect[],
+    bounds: PlanBounds | null
+  ): PlanBounds {
+    const visibleRects = bounds ? [...rects, bounds] : rects;
+    if (visibleRects.length === 0) {
+      return { x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
+    }
+
+    const left = Math.min(0, ...visibleRects.map((rect) => rect.x));
+    const top = Math.min(0, ...visibleRects.map((rect) => rect.y));
+    const right = Math.max(
+      CANVAS_WIDTH,
+      ...visibleRects.map((rect) => rect.x + rect.width)
+    );
+    const bottom = Math.max(
+      CANVAS_HEIGHT,
+      ...visibleRects.map((rect) => rect.y + rect.height)
+    );
+    const x = left < 0 ? left - CANVAS_PADDING : 0;
+    const y = top < 0 ? top - CANVAS_PADDING : 0;
+
+    return {
+      x,
+      y,
+      width: right - x + CANVAS_PADDING,
+      height: bottom - y + CANVAS_PADDING
+    };
   }
 
   function handleRoomPointerDown(event: PointerEvent, room: Room) {
@@ -1407,7 +1446,7 @@
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <svg
             class="block h-[calc(100vh-112px)] min-h-[520px] w-full min-w-[860px] border border-[#cbd5df] bg-[#eef2f6]"
-            viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+            viewBox={`${canvasViewport.x} ${canvasViewport.y} ${canvasViewport.width} ${canvasViewport.height}`}
             role="application"
             tabindex="0"
             aria-label="Locked floor plan canvas. Review the existing baseline."
@@ -1430,7 +1469,13 @@
               </pattern>
             </defs>
 
-            <rect width={CANVAS_WIDTH} height={CANVAS_HEIGHT} fill="#dde4ec" />
+            <rect
+              x={canvasViewport.x}
+              y={canvasViewport.y}
+              width={canvasViewport.width}
+              height={canvasViewport.height}
+              fill="#dde4ec"
+            />
             {#if lockedBounds}
               <rect
                 x={lockedBounds.x}
@@ -1560,7 +1605,7 @@
           <svg
             bind:this={canvas}
             class="block h-[calc(100vh-112px)] min-h-[520px] w-full min-w-[860px] border border-[#cbd5df] bg-[#eef2f6]"
-            viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+            viewBox={`${canvasViewport.x} ${canvasViewport.y} ${canvasViewport.width} ${canvasViewport.height}`}
             role="application"
             tabindex="0"
             aria-label="Floor plan canvas. Drag room blocks to arrange the existing plan."
@@ -1589,8 +1634,10 @@
 
             {#if lockedBounds}
               <rect
-                width={CANVAS_WIDTH}
-                height={CANVAS_HEIGHT}
+                x={canvasViewport.x}
+                y={canvasViewport.y}
+                width={canvasViewport.width}
+                height={canvasViewport.height}
                 fill="#dde4ec"
               />
               <rect
@@ -1612,8 +1659,10 @@
               />
             {:else}
               <rect
-                width={CANVAS_WIDTH}
-                height={CANVAS_HEIGHT}
+                x={canvasViewport.x}
+                y={canvasViewport.y}
+                width={canvasViewport.width}
+                height={canvasViewport.height}
                 fill="url(#grid)"
               />
             {/if}
