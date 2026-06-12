@@ -70,6 +70,10 @@
   ) as Record<SetupRoomKind, number>;
   let wholeAreaWidth = '6.00';
   let wholeAreaLength = '8.00';
+  let proposedMeasurementRoomId: string | null = null;
+  let proposedMeasurementEditing: 'width' | 'height' | null = null;
+  let proposedWidthDraft = '';
+  let proposedDepthDraft = '';
 
   const roomFillClasses: Record<Room['type'], string> = {
     bedroom: 'fill-[#dfeadf]',
@@ -138,6 +142,24 @@
     Number(wholeAreaWidth),
     Number(wholeAreaLength)
   );
+  $: if ($selectedProposedRoom?.id !== proposedMeasurementRoomId) {
+    proposedMeasurementRoomId = $selectedProposedRoom?.id ?? null;
+    proposedMeasurementEditing = null;
+    proposedWidthDraft = $selectedProposedRoom
+      ? pixelsToMetres($selectedProposedRoom.width).toFixed(2)
+      : '';
+    proposedDepthDraft = $selectedProposedRoom
+      ? pixelsToMetres($selectedProposedRoom.height).toFixed(2)
+      : '';
+  }
+  $: if ($selectedProposedRoom && proposedMeasurementEditing !== 'width') {
+    proposedWidthDraft = pixelsToMetres($selectedProposedRoom.width).toFixed(2);
+  }
+  $: if ($selectedProposedRoom && proposedMeasurementEditing !== 'height') {
+    proposedDepthDraft = pixelsToMetres($selectedProposedRoom.height).toFixed(
+      2
+    );
+  }
 
   function scheduleSaved() {
     clearTimeout(saveTimer);
@@ -246,6 +268,17 @@
     if (!Number.isFinite(metres)) return null;
 
     return (metres / 0.25) * GRID_SIZE;
+  }
+
+  function updateProposedMeasurement(field: 'width' | 'height', value: string) {
+    if (!$selectedProposedRoom) return;
+    const pixels = pixelsFromMetres(value);
+    if (pixels === null) return;
+
+    editor.updateProposedRoom($selectedProposedRoom.id, {
+      [field]: pixels
+    });
+    scheduleSaved();
   }
 
   function canvasViewportFor(
@@ -1293,16 +1326,18 @@
                 class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                 inputmode="decimal"
                 min="0.5"
-                step="0.25"
+                step="0.01"
                 type="number"
-                value={pixelsToMetres($selectedProposedRoom.width).toFixed(2)}
+                value={proposedWidthDraft}
+                onfocus={() => {
+                  proposedMeasurementEditing = 'width';
+                }}
+                onblur={() => {
+                  proposedMeasurementEditing = null;
+                }}
                 oninput={(event) => {
-                  const value = pixelsFromMetres(event.currentTarget.value);
-                  if (value === null) return;
-                  editor.updateProposedRoom($selectedProposedRoom.id, {
-                    width: value
-                  });
-                  scheduleSaved();
+                  proposedWidthDraft = event.currentTarget.value;
+                  updateProposedMeasurement('width', proposedWidthDraft);
                 }}
               />
             </label>
@@ -1312,16 +1347,18 @@
                 class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                 inputmode="decimal"
                 min="0.5"
-                step="0.25"
+                step="0.01"
                 type="number"
-                value={pixelsToMetres($selectedProposedRoom.height).toFixed(2)}
+                value={proposedDepthDraft}
+                onfocus={() => {
+                  proposedMeasurementEditing = 'height';
+                }}
+                onblur={() => {
+                  proposedMeasurementEditing = null;
+                }}
                 oninput={(event) => {
-                  const value = pixelsFromMetres(event.currentTarget.value);
-                  if (value === null) return;
-                  editor.updateProposedRoom($selectedProposedRoom.id, {
-                    height: value
-                  });
-                  scheduleSaved();
+                  proposedDepthDraft = event.currentTarget.value;
+                  updateProposedMeasurement('height', proposedDepthDraft);
                 }}
               />
             </label>
@@ -2049,13 +2086,21 @@
                   </text>
                   {#if room.id === $editor.selectedProposedRoomId}
                     <text
-                      class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
-                      x={room.x + 14}
-                      y={room.y + room.height - 16}
+                      class="pointer-events-none select-none fill-[#344153] text-[12px] font-bold"
+                      x={room.x + room.width / 2}
+                      y={room.y + room.height - 14}
+                      text-anchor="middle"
                     >
-                      {pixelsToMetres(room.width).toFixed(2)}m x {pixelsToMetres(
-                        room.height
-                      ).toFixed(2)}m
+                      {pixelsToMetres(room.width).toFixed(2)}m width
+                    </text>
+                    <text
+                      class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
+                      x={room.x + room.width - 14}
+                      y={room.y + room.height / 2}
+                      text-anchor="middle"
+                      transform={`rotate(-90 ${room.x + room.width - 14} ${room.y + room.height / 2})`}
+                    >
+                      {pixelsToMetres(room.height).toFixed(2)}m depth
                     </text>
                     {#each resizeHandles(room) as item (item.handle)}
                       <!-- svelte-ignore a11y_no_static_element_interactions -->

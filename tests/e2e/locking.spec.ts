@@ -230,3 +230,26 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
     0
   );
 });
+
+test('keeps precise proposed room measurements from inspector inputs', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByLabel('Width m').fill('6');
+  await page.getByLabel('Length m').fill('8');
+  await page.getByRole('button', { name: 'Create plan' }).click();
+  await page.getByRole('button', { name: 'Lock baseline' }).click();
+  await page.getByRole('button', { name: 'Create scenario' }).click();
+  await page.getByRole('button', { name: 'Add room' }).click();
+  await page.getByRole('menuitem', { name: 'Bedroom' }).click();
+
+  const inspector = page.getByRole('complementary');
+  await inspector.getByLabel('Width m').click();
+  await page.keyboard.press(
+    process.platform === 'darwin' ? 'Meta+A' : 'Control+A'
+  );
+  await page.keyboard.type('1.57');
+  await expect(inspector.getByLabel('Width m')).toHaveValue('1.57');
+  await expect(page.getByText('1.57m width')).toBeVisible();
+});
