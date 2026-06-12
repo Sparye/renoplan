@@ -1673,22 +1673,6 @@
                       ).toFixed(2)}m
                     </text>
                   {/if}
-                  {#if room.id === $editor.selectedRoomId}
-                    {#each resizeHandles(room) as item (item.handle)}
-                      <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <rect
-                        class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
-                        x={item.x - 5}
-                        y={item.y - 5}
-                        width="10"
-                        height="10"
-                        rx="2"
-                        vector-effect="non-scaling-stroke"
-                        onpointerdown={(event) =>
-                          handleResizePointerDown(event, room.id, item.handle)}
-                      />
-                    {/each}
-                  {/if}
                 </g>
               {/each}
             {/if}
@@ -1750,6 +1734,29 @@
                   </g>
                 {/if}
               {/each}
+            {/if}
+
+            {#if !isScenarioMode && $selectedRoom}
+              <g aria-label={`Resize ${$selectedRoom.name}`}>
+                {#each resizeHandles($selectedRoom) as item (item.handle)}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <rect
+                    class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
+                    x={item.x - 5}
+                    y={item.y - 5}
+                    width="10"
+                    height="10"
+                    rx="2"
+                    vector-effect="non-scaling-stroke"
+                    onpointerdown={(event) =>
+                      handleResizePointerDown(
+                        event,
+                        $selectedRoom.id,
+                        item.handle
+                      )}
+                  />
+                {/each}
+              </g>
             {/if}
 
             {#if isScenarioMode}

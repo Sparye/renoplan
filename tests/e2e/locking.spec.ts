@@ -7,6 +7,39 @@ test.beforeEach(async ({ page }) => {
   await page.waitForTimeout(500);
 });
 
+test('selects and resizes rooms while configuring an unlocked baseline', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByTestId('add-bedroom').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Create plan' }).click();
+
+  const bedroom = page.getByRole('button', { name: 'Select Bedroom' });
+  await expect(bedroom).toBeVisible();
+  await bedroom.click({ position: { x: 32, y: 32 } });
+  const inspector = page.getByRole('complementary');
+  await expect(inspector.getByText('Selected room')).toBeVisible();
+  await expect(inspector.getByText('1.50m x 1.50m')).toBeVisible();
+
+  const beforeBox = await bedroom.boundingBox();
+  if (!beforeBox) throw new Error('Bedroom was not rendered');
+
+  await page.mouse.move(
+    beforeBox.x + beforeBox.width,
+    beforeBox.y + beforeBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    beforeBox.x + beforeBox.width + 60,
+    beforeBox.y + beforeBox.height / 2
+  );
+  await page.mouse.up();
+
+  await expect(inspector.getByText('2.25m x 1.50m')).toBeVisible();
+});
+
 test('locks a baseline and creates a bounded renovation scenario', async ({
   page
 }) => {
@@ -21,7 +54,9 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Create plan' }).click();
 
-  await page.getByTestId('wall-bedroom-1-north-48-192-hitbox').click();
+  await page
+    .getByTestId('wall-bedroom-1-north-48-192-hitbox')
+    .click({ position: { x: 20, y: 9 } });
   await expect(page.getByRole('menu', { name: 'Wall actions' })).toBeVisible();
   await page.getByRole('menuitem', { name: 'Add door/opening' }).click();
   await expect(page.getByText('Openings')).toBeVisible();
