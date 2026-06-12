@@ -82,6 +82,31 @@ describe('wall derivation', () => {
 });
 
 describe('baseline locking', () => {
+  it('can start a draft baseline from whole-area dimensions', () => {
+    const store = createEditorStore({
+      storage: new MemoryStorage(),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.startEditorFromWholeArea(528, 768);
+    const state = get(store);
+
+    expect(state.setupStep).toBe('editor');
+    expect(state.selectedRoomId).toBe('whole-area');
+    expect(state.baselinePlan.rooms).toEqual([
+      expect.objectContaining({
+        id: 'whole-area',
+        name: 'Whole area',
+        type: 'generic',
+        x: 48,
+        y: 48,
+        width: 528,
+        height: 768
+      })
+    ]);
+    expect(state.baselinePlan.walls).toHaveLength(4);
+  });
+
   it('blocks locking an empty baseline', () => {
     const store = createEditorStore({
       storage: new MemoryStorage(),

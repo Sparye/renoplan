@@ -230,7 +230,7 @@ export const pixelsToMetres = (value: number) =>
   (value / GRID_SIZE) * METRES_PER_GRID;
 
 export const metresToPixels = (value: number) =>
-  Math.max(MIN_ROOM_SIZE, Math.round(value / METRES_PER_GRID) * GRID_SIZE);
+  Math.max(MIN_ROOM_SIZE, (value / METRES_PER_GRID) * GRID_SIZE);
 
 const setupOptionFor = (kind: SetupRoomKind) =>
   roomSetupOptions.find((option) => option.kind === kind) ??
@@ -292,6 +292,23 @@ function planFromInventory(inventory: RoomInventoryItem[]): PlanDocument {
   return normalisePlan({
     ...emptyPlan,
     rooms
+  });
+}
+
+function planFromWholeArea(width: number, height: number): PlanDocument {
+  return normalisePlan({
+    ...emptyPlan,
+    rooms: [
+      {
+        id: 'whole-area',
+        name: 'Whole area',
+        type: 'generic',
+        x: GRID_SIZE * 2,
+        y: GRID_SIZE * 2,
+        width,
+        height
+      }
+    ]
   });
 }
 
@@ -1231,6 +1248,28 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         if (state.lockedBaseline) return state;
 
         const plan = planFromInventory(state.inventory);
+        const nextState = {
+          ...state,
+          baselinePlan: plan,
+          draftPlan: plan,
+          activeMode: 'baseline' as const,
+          setupStep: 'editor' as const,
+          selectedRoomId: plan.rooms[0]?.id ?? null,
+          selectedProposedRoomId: null,
+          selectedWallId: null,
+          baselinePast: [],
+          baselineFuture: [],
+          saveState: 'saving' as const
+        };
+        saveState(nextState);
+        return nextState;
+      });
+    },
+    startEditorFromWholeArea(width: number, height: number) {
+      updateState((state) => {
+        if (state.lockedBaseline) return state;
+
+        const plan = planFromWholeArea(width, height);
         const nextState = {
           ...state,
           baselinePlan: plan,

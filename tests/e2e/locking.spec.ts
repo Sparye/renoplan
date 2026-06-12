@@ -57,7 +57,7 @@ test('scales the canvas viewport for a large measured room', async ({
   const bedroom = page.getByRole('button', { name: 'Select Bedroom' });
 
   await expect(bedroom).toBeVisible();
-  await expect(canvas).toHaveAttribute('viewBox', '0 0 1008 1392');
+  await expect(canvas).toHaveAttribute('viewBox', '0 0 1008 1382.4');
 
   const canvasBox = await canvas.boundingBox();
   const bedroomBox = await bedroom.boundingBox();
@@ -66,6 +66,45 @@ test('scales the canvas viewport for a large measured room', async ({
   expect(bedroomBox.y + bedroomBox.height).toBeLessThanOrEqual(
     canvasBox.y + canvasBox.height + 1
   );
+});
+
+test('keeps precise setup measurements instead of rounding to the grid', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByTestId('add-bedroom').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await page.getByLabel('Width m').fill('3.4');
+  await expect(page.getByLabel('Width m')).toHaveValue('3.40');
+
+  await page.getByRole('button', { name: 'Create plan' }).click();
+
+  const bedroom = page.getByRole('button', { name: 'Select Bedroom' });
+  await expect(bedroom).toBeVisible();
+  await bedroom.click({ position: { x: 32, y: 32 } });
+
+  await expect(page.getByRole('complementary')).toContainText('3.40m x 1.50m');
+});
+
+test('creates an existing baseline from whole-area dimensions', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByLabel('Width m').fill('5.5');
+  await page.getByLabel('Length m').fill('8');
+  await expect(
+    page.getByText('Preview: width is horizontal, length is vertical')
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Swap width/length' }).click();
+  await page.getByRole('button', { name: 'Create plan' }).click();
+
+  const wholeArea = page.getByRole('button', { name: 'Select Whole area' });
+  await expect(wholeArea).toBeVisible();
+  await expect(page.getByRole('complementary')).toContainText('8.00m x 5.50m');
+  await expect(page.getByRole('complementary')).toContainText('1');
 });
 
 test('locks a baseline and creates a bounded renovation scenario', async ({

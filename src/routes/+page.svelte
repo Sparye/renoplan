@@ -68,6 +68,8 @@
   let counts = Object.fromEntries(
     roomSetupOptions.map((option) => [option.kind, 0])
   ) as Record<SetupRoomKind, number>;
+  let wholeAreaWidth = '6.00';
+  let wholeAreaLength = '8.00';
 
   const roomFillClasses: Record<Room['type'], string> = {
     bedroom: 'fill-[#dfeadf]',
@@ -132,6 +134,10 @@
     : isLockedBaseline
       ? 'Locked existing layout'
       : 'Draft existing layout';
+  $: wholeAreaPreview = previewWholeArea(
+    Number(wholeAreaWidth),
+    Number(wholeAreaLength)
+  );
 
   function scheduleSaved() {
     clearTimeout(saveTimer);
@@ -147,6 +153,58 @@
 
   function submitCounts() {
     editor.createInventory(counts);
+  }
+
+  function submitWholeArea() {
+    const width = Number(wholeAreaWidth);
+    const length = Number(wholeAreaLength);
+    if (
+      !Number.isFinite(width) ||
+      !Number.isFinite(length) ||
+      width <= 0 ||
+      length <= 0
+    ) {
+      return;
+    }
+
+    editor.startEditorFromWholeArea(
+      metresToPixels(width),
+      metresToPixels(length)
+    );
+    scheduleSaved();
+  }
+
+  function swapWholeAreaDimensions() {
+    const nextWidth = wholeAreaLength;
+    wholeAreaLength = wholeAreaWidth;
+    wholeAreaWidth = nextWidth;
+  }
+
+  function previewWholeArea(width: number, length: number) {
+    const safeWidth = Number.isFinite(width) && width > 0 ? width : 1;
+    const safeLength = Number.isFinite(length) && length > 0 ? length : 1;
+    const previewWidth = 260;
+    const previewHeight = 190;
+    const maxRectWidth = 190;
+    const maxRectHeight = 120;
+    const scale = Math.min(
+      maxRectWidth / safeWidth,
+      maxRectHeight / safeLength
+    );
+    const rectWidth = safeWidth * scale;
+    const rectHeight = safeLength * scale;
+
+    return {
+      x: (previewWidth - rectWidth) / 2,
+      y: 28 + (maxRectHeight - rectHeight) / 2,
+      width: rectWidth,
+      height: rectHeight,
+      canvasWidth: previewWidth,
+      canvasHeight: previewHeight,
+      labelWidth: safeWidth,
+      labelLength: safeLength,
+      area: safeWidth * safeLength
+    };
   }
 
   function updateInventoryMetres(
@@ -689,10 +747,151 @@
         </section>
       {:else if $editor.setupStep === 'counts'}
         <section class="grid gap-5">
+          <div
+            class="grid gap-3 rounded-md border border-[#d8dee5] bg-white p-4"
+          >
+            <div class="grid gap-1">
+              <h2 class="m-0 text-[1.1rem] font-bold tracking-normal">
+                Start with the whole area
+              </h2>
+              <p class="m-0 text-sm text-[#5f6c7b]">
+                Enter the overall workable area when you know the footprint
+                before the individual room sizes.
+              </p>
+            </div>
+            <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div
+                class="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] items-end gap-3"
+              >
+                <label class="grid gap-1 text-sm font-bold text-[#344153]">
+                  Width m
+                  <input
+                    class="min-h-10 rounded-md border border-[#c8d1dc] bg-white px-3 text-[#17202a]"
+                    inputmode="decimal"
+                    min="0.5"
+                    step="0.01"
+                    type="number"
+                    value={wholeAreaWidth}
+                    oninput={(event) =>
+                      (wholeAreaWidth = event.currentTarget.value)}
+                  />
+                </label>
+                <label class="grid gap-1 text-sm font-bold text-[#344153]">
+                  Length m
+                  <input
+                    class="min-h-10 rounded-md border border-[#c8d1dc] bg-white px-3 text-[#17202a]"
+                    inputmode="decimal"
+                    min="0.5"
+                    step="0.01"
+                    type="number"
+                    value={wholeAreaLength}
+                    oninput={(event) =>
+                      (wholeAreaLength = event.currentTarget.value)}
+                  />
+                </label>
+                <button
+                  class="inline-flex min-h-10 items-center justify-center rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-4 text-sm font-bold text-[#17202a]"
+                  type="button"
+                  onclick={swapWholeAreaDimensions}
+                >
+                  Swap width/length
+                </button>
+                <button
+                  class="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-[#0f766e] px-4 text-sm font-bold text-white"
+                  type="button"
+                  onclick={submitWholeArea}
+                >
+                  <Check size={18} />
+                  Create plan
+                </button>
+              </div>
+
+              <figure
+                class="m-0 grid justify-items-center gap-2 rounded-md bg-[#f8fafc] p-3"
+                aria-label="Whole area orientation preview"
+              >
+                <svg
+                  class="h-auto w-full max-w-[260px]"
+                  viewBox={`0 0 ${wholeAreaPreview.canvasWidth} ${wholeAreaPreview.canvasHeight}`}
+                  role="img"
+                  aria-label="Width runs left to right. Length runs top to bottom."
+                >
+                  <defs>
+                    <marker
+                      id="area-preview-arrow"
+                      viewBox="0 0 10 10"
+                      refX="5"
+                      refY="5"
+                      markerWidth="5"
+                      markerHeight="5"
+                      orient="auto-start-reverse"
+                    >
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e" />
+                    </marker>
+                  </defs>
+                  <rect
+                    x={wholeAreaPreview.x}
+                    y={wholeAreaPreview.y}
+                    width={wholeAreaPreview.width}
+                    height={wholeAreaPreview.height}
+                    fill="#e8ecef"
+                    stroke="#17202a"
+                    stroke-width="2"
+                    rx="3"
+                  />
+                  <line
+                    x1={wholeAreaPreview.x}
+                    y1={wholeAreaPreview.y + wholeAreaPreview.height + 18}
+                    x2={wholeAreaPreview.x + wholeAreaPreview.width}
+                    y2={wholeAreaPreview.y + wholeAreaPreview.height + 18}
+                    stroke="#0f766e"
+                    stroke-width="2"
+                    marker-start="url(#area-preview-arrow)"
+                    marker-end="url(#area-preview-arrow)"
+                  />
+                  <text
+                    class="fill-[#0f766e] text-[12px] font-bold"
+                    x={wholeAreaPreview.x + wholeAreaPreview.width / 2}
+                    y={wholeAreaPreview.y + wholeAreaPreview.height + 38}
+                    text-anchor="middle"
+                  >
+                    Width {wholeAreaPreview.labelWidth.toFixed(2)}m
+                  </text>
+                  <line
+                    x1={wholeAreaPreview.x - 18}
+                    y1={wholeAreaPreview.y}
+                    x2={wholeAreaPreview.x - 18}
+                    y2={wholeAreaPreview.y + wholeAreaPreview.height}
+                    stroke="#0f766e"
+                    stroke-width="2"
+                    marker-start="url(#area-preview-arrow)"
+                    marker-end="url(#area-preview-arrow)"
+                  />
+                  <text
+                    class="fill-[#0f766e] text-[12px] font-bold"
+                    x={wholeAreaPreview.x - 36}
+                    y={wholeAreaPreview.y + wholeAreaPreview.height / 2}
+                    text-anchor="middle"
+                    transform={`rotate(-90 ${wholeAreaPreview.x - 36} ${wholeAreaPreview.y + wholeAreaPreview.height / 2})`}
+                  >
+                    Length {wholeAreaPreview.labelLength.toFixed(2)}m
+                  </text>
+                </svg>
+                <figcaption
+                  class="text-center text-xs font-bold text-[#66717e]"
+                >
+                  Preview: width is horizontal, length is vertical · {wholeAreaPreview.area.toFixed(
+                    2
+                  )}m²
+                </figcaption>
+              </figure>
+            </div>
+          </div>
+
           <div class="flex items-end justify-between gap-4">
             <div class="grid gap-1">
               <h2 class="m-0 text-[1.1rem] font-bold tracking-normal">
-                Count each room
+                Or count each room
               </h2>
               <p class="m-0 text-sm text-[#5f6c7b]">
                 Add only rooms present in the current house.
@@ -793,7 +992,7 @@
                     class="min-h-10 rounded-md border border-[#c8d1dc] bg-white px-3 text-[#17202a]"
                     inputmode="decimal"
                     min="0.5"
-                    step="0.25"
+                    step="0.01"
                     type="number"
                     value={pixelsToMetres(room.width).toFixed(2)}
                     oninput={(event) =>
@@ -810,7 +1009,7 @@
                     class="min-h-10 rounded-md border border-[#c8d1dc] bg-white px-3 text-[#17202a]"
                     inputmode="decimal"
                     min="0.5"
-                    step="0.25"
+                    step="0.01"
                     type="number"
                     value={pixelsToMetres(room.height).toFixed(2)}
                     oninput={(event) =>
