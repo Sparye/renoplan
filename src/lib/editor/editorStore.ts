@@ -3,6 +3,7 @@ import { derived, writable } from 'svelte/store';
 import type {
   Opening,
   PlanDocument,
+  PlanPoint,
   PlanRect,
   ProposedRoom,
   Room,
@@ -177,8 +178,14 @@ const createRuntimeId = (prefix: string) =>
 
 export const clonePlan = (plan: PlanDocument): PlanDocument => ({
   ...plan,
-  rooms: plan.rooms.map((room) => ({ ...room })),
-  proposedRooms: (plan.proposedRooms ?? []).map((room) => ({ ...room })),
+  rooms: plan.rooms.map((room) => ({
+    ...room,
+    shape: room.shape?.map((point) => ({ ...point }))
+  })),
+  proposedRooms: (plan.proposedRooms ?? []).map((room) => ({
+    ...room,
+    shape: room.shape?.map((point) => ({ ...point }))
+  })),
   walls: plan.walls.map((wall) => ({ ...wall, roomIds: [...wall.roomIds] })),
   openings: plan.openings.map((opening) => ({ ...opening })),
   objects: plan.objects.map((object) => ({ ...object }))
@@ -222,6 +229,190 @@ const overlap = (
 
 const same = (first: number, second: number) =>
   Math.abs(first - second) < 0.001;
+
+const roomShape = (room: PlanRect & { shape?: PlanPoint[] }) =>
+  room.shape && room.shape.length >= 3
+    ? room.shape
+    : [
+        { x: room.x, y: room.y },
+        { x: room.x + room.width, y: room.y },
+        { x: room.x + room.width, y: room.y + room.height },
+        { x: room.x, y: room.y + room.height }
+      ];
+
+function boundsFromPoints(points: PlanPoint[]): PlanRect {
+  const left = Math.min(...points.map((point) => point.x));
+  const top = Math.min(...points.map((point) => point.y));
+  const right = Math.max(...points.map((point) => point.x));
+  const bottom = Math.max(...points.map((point) => point.y));
+
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top
+  };
+}
+
+function withRoomBounds<T extends Room | ProposedRoom>(room: T): T {
+  if (!room.shape || room.shape.length < 3) return room;
+
+  return {
+    ...room,
+    ...boundsFromPoints(room.shape)
+  };
+}
+
+function translateRoom<T extends Room | ProposedRoom>(
+  room: T,
+  x: number,
+  y: number
+): T {
+  const dx = x - room.x;
+  const dy = y - room.y;
+
+  return {
+    ...room,
+    x,
+    y,
+    shape: room.shape?.map((point) => ({
+      x: point.x + dx,
+      y: point.y + dy
+    }))
+  };
+}
+
+function reshapeRoom<T extends Room | ProposedRoom>(
+  room: T,
+  rect: PlanRect
+): T {
+  if (!room.shape || room.shape.length < 3) return { ...room, ...rect };
+
+  const widthScale = room.width === 0 ? 1 : rect.width / room.width;
+  const heightScale = room.height === 0 ? 1 : rect.height / room.height;
+
+  return {
+    ...room,
+    ...rect,
+    shape: room.shape.map((point) => ({
+      x: rect.x + (point.x - room.x) * widthScale,
+      y: rect.y + (point.y - room.y) * heightScale
+    }))
+  };
+}
+
+function rectsTouchOrOverlap(first: PlanRect, second: PlanRect) {
+  return (
+    first.x <= second.x + second.width &&
+    first.x + first.width >= second.x &&
+    first.y <= second.y + second.height &&
+    first.y + first.height >= second.y
+  );
+}
+
+function polygonFromRectUnion(first: PlanRect, second: PlanRect) {
+  if (!rectsTouchOrOverlap(first, second)) return null;
+
+  const xs = [
+    first.x,
+    first.x + first.width,
+    second.x,
+    second.x + second.width
+  ].sort((a, b) => a - b);
+  const ys = [
+    first.y,
+    first.y + first.height,
+    second.y,
+    second.y + second.height
+  ].sort((a, b) => a - b);
+  const uniqueXs = [...new Set(xs)];
+  const uniqueYs = [...new Set(ys)];
+  const covered = new Set<string>();
+
+  for (let xIndex = 0; xIndex < uniqueXs.length - 1; xIndex += 1) {
+    for (let yIndex = 0; yIndex < uniqueYs.length - 1; yIndex += 1) {
+      const cell = {
+        x: uniqueXs[xIndex],
+        y: uniqueYs[yIndex],
+        width: uniqueXs[xIndex + 1] - uniqueXs[xIndex],
+        height: uniqueYs[yIndex + 1] - uniqueYs[yIndex]
+      };
+      const coveredByFirst =
+        cell.x >= first.x &&
+        cell.x + cell.width <= first.x + first.width &&
+        cell.y >= first.y &&
+        cell.y + cell.height <= first.y + first.height;
+      const coveredBySecond =
+        cell.x >= second.x &&
+        cell.x + cell.width <= second.x + second.width &&
+        cell.y >= second.y &&
+        cell.y + cell.height <= second.y + second.height;
+
+      if (coveredByFirst || coveredBySecond) {
+        covered.add(`${xIndex},${yIndex}`);
+      }
+    }
+  }
+
+  const edges: { start: PlanPoint; end: PlanPoint }[] = [];
+  for (const key of covered) {
+    const [xIndex, yIndex] = key.split(',').map(Number);
+    const left = uniqueXs[xIndex];
+    const right = uniqueXs[xIndex + 1];
+    const top = uniqueYs[yIndex];
+    const bottom = uniqueYs[yIndex + 1];
+
+    if (!covered.has(`${xIndex},${yIndex - 1}`)) {
+      edges.push({ start: { x: left, y: top }, end: { x: right, y: top } });
+    }
+    if (!covered.has(`${xIndex + 1},${yIndex}`)) {
+      edges.push({ start: { x: right, y: top }, end: { x: right, y: bottom } });
+    }
+    if (!covered.has(`${xIndex},${yIndex + 1}`)) {
+      edges.push({
+        start: { x: right, y: bottom },
+        end: { x: left, y: bottom }
+      });
+    }
+    if (!covered.has(`${xIndex - 1},${yIndex}`)) {
+      edges.push({ start: { x: left, y: bottom }, end: { x: left, y: top } });
+    }
+  }
+
+  if (edges.length === 0) return null;
+
+  const pointKey = (point: PlanPoint) => `${point.x},${point.y}`;
+  const remaining = [...edges];
+  const firstEdge = remaining.shift();
+  if (!firstEdge) return null;
+
+  const points = [firstEdge.start, firstEdge.end];
+  while (remaining.length > 0) {
+    const last = points.at(-1);
+    const nextIndex = remaining.findIndex(
+      (edge) => last && pointKey(edge.start) === pointKey(last)
+    );
+    if (nextIndex === -1) return null;
+
+    const [next] = remaining.splice(nextIndex, 1);
+    if (pointKey(next.end) === pointKey(points[0])) break;
+    points.push(next.end);
+  }
+
+  const isCollinear = (
+    previous: PlanPoint,
+    current: PlanPoint,
+    next: PlanPoint
+  ) =>
+    (same(previous.x, current.x) && same(current.x, next.x)) ||
+    (same(previous.y, current.y) && same(current.y, next.y));
+
+  return points.filter((point, index) => {
+    const previous = points[(index - 1 + points.length) % points.length];
+    const next = points[(index + 1) % points.length];
+    return !isCollinear(previous, point, next);
+  });
+}
 
 export const snapValue = (value: number, enabled = true) =>
   enabled ? Math.round(value / GRID_SIZE) * GRID_SIZE : value;
@@ -322,10 +513,11 @@ function proposedRoomLabel(plan: PlanDocument, kind: SetupRoomKind) {
 export function derivePlanBounds(plan: PlanDocument): PlanBounds | null {
   if (plan.rooms.length === 0) return null;
 
-  const left = Math.min(...plan.rooms.map((room) => room.x));
-  const top = Math.min(...plan.rooms.map((room) => room.y));
-  const right = Math.max(...plan.rooms.map((room) => room.x + room.width));
-  const bottom = Math.max(...plan.rooms.map((room) => room.y + room.height));
+  const rooms = plan.rooms.map(withRoomBounds);
+  const left = Math.min(...rooms.map((room) => room.x));
+  const top = Math.min(...rooms.map((room) => room.y));
+  const right = Math.max(...rooms.map((room) => room.x + room.width));
+  const bottom = Math.max(...rooms.map((room) => room.y + room.height));
 
   return {
     x: left,
@@ -338,15 +530,17 @@ export function derivePlanBounds(plan: PlanDocument): PlanBounds | null {
 export function deriveSharedWalls(plan: PlanDocument): Wall[] {
   const previousWalls = new Map(plan.walls.map((wall) => [wall.id, wall]));
   const walls: Wall[] = [];
+  const rooms = plan.rooms.map(withRoomBounds);
 
-  for (let firstIndex = 0; firstIndex < plan.rooms.length; firstIndex += 1) {
+  for (let firstIndex = 0; firstIndex < rooms.length; firstIndex += 1) {
     for (
       let secondIndex = firstIndex + 1;
-      secondIndex < plan.rooms.length;
+      secondIndex < rooms.length;
       secondIndex += 1
     ) {
-      const first = plan.rooms[firstIndex];
-      const second = plan.rooms[secondIndex];
+      const first = rooms[firstIndex];
+      const second = rooms[secondIndex];
+      if (first.shape || second.shape) continue;
       const firstRight = first.x + first.width;
       const secondRight = second.x + second.width;
       const firstBottom = first.y + first.height;
@@ -423,7 +617,28 @@ export function deriveWalls(plan: PlanDocument): Wall[] {
   const sharedWalls = deriveSharedWalls(plan);
   const exteriorWalls: Wall[] = [];
 
-  for (const room of plan.rooms) {
+  for (const room of plan.rooms.map(withRoomBounds)) {
+    if (room.shape && room.shape.length >= 3) {
+      const points = roomShape(room);
+      points.forEach((point, index) => {
+        const nextPoint = points[(index + 1) % points.length];
+        const id = `wall-${room.id}-edge-${index}`;
+        const previous = previousWalls.get(id);
+        exteriorWalls.push({
+          id,
+          kind: 'exterior',
+          roomIds: [room.id],
+          x1: point.x,
+          y1: point.y,
+          x2: nextPoint.x,
+          y2: nextPoint.y,
+          structural: previous?.structural ?? false,
+          removed: previous?.removed ?? false
+        });
+      });
+      continue;
+    }
+
     const right = room.x + room.width;
     const bottom = room.y + room.height;
     const sides = [
@@ -531,14 +746,19 @@ export function deriveWalls(plan: PlanDocument): Wall[] {
 }
 
 function normalisePlan(plan: PlanDocument): PlanDocument {
-  const walls = deriveWalls(plan);
+  const shapedPlan = {
+    ...plan,
+    rooms: plan.rooms.map(withRoomBounds),
+    proposedRooms: (plan.proposedRooms ?? []).map(withRoomBounds)
+  };
+  const walls = deriveWalls(shapedPlan);
   const wallIds = new Set(walls.map((wall) => wall.id));
-  const openings = plan.openings.filter((opening) =>
+  const openings = shapedPlan.openings.filter((opening) =>
     wallIds.has(opening.wallId)
   );
 
   return {
-    ...clonePlan(plan),
+    ...clonePlan(shapedPlan),
     walls,
     openings
   };
@@ -800,6 +1020,73 @@ function rectsOverlap(first: PlanRect, second: PlanRect) {
     first.y < second.y + second.height &&
     first.y + first.height > second.y
   );
+}
+
+function snapRectToRoomEdges(
+  rect: PlanRect,
+  roomId: string,
+  rooms: ProposedRoom[],
+  enabled: boolean
+) {
+  if (!enabled) return rect;
+
+  const threshold = GRID_SIZE / 2;
+  const otherRooms = rooms.filter((room) => room.id !== roomId);
+  let nextRect = { ...rect };
+
+  for (const room of otherRooms) {
+    const horizontalSnaps = [
+      {
+        distance: Math.abs(nextRect.x - room.x),
+        x: room.x
+      },
+      {
+        distance: Math.abs(nextRect.x + nextRect.width - room.x),
+        x: room.x - nextRect.width
+      },
+      {
+        distance: Math.abs(nextRect.x - (room.x + room.width)),
+        x: room.x + room.width
+      },
+      {
+        distance: Math.abs(nextRect.x + nextRect.width - (room.x + room.width)),
+        x: room.x + room.width - nextRect.width
+      }
+    ]
+      .filter((snap) => snap.distance <= threshold)
+      .sort((first, second) => first.distance - second.distance);
+
+    const verticalSnaps = [
+      {
+        distance: Math.abs(nextRect.y - room.y),
+        y: room.y
+      },
+      {
+        distance: Math.abs(nextRect.y + nextRect.height - room.y),
+        y: room.y - nextRect.height
+      },
+      {
+        distance: Math.abs(nextRect.y - (room.y + room.height)),
+        y: room.y + room.height
+      },
+      {
+        distance: Math.abs(
+          nextRect.y + nextRect.height - (room.y + room.height)
+        ),
+        y: room.y + room.height - nextRect.height
+      }
+    ]
+      .filter((snap) => snap.distance <= threshold)
+      .sort((first, second) => first.distance - second.distance);
+
+    nextRect = {
+      ...nextRect,
+      x: horizontalSnaps[0]?.x ?? nextRect.x,
+      y: verticalSnaps[0]?.y ?? nextRect.y
+    };
+  }
+
+  return nextRect;
 }
 
 function clampProposedRect(
@@ -1483,17 +1770,25 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
             ...plan,
             rooms: plan.rooms.map((room) =>
               room.id === roomId
-                ? {
-                    ...room,
-                    ...clampRectToBounds(
+                ? translateRoom(
+                    room,
+                    clampRectToBounds(
                       {
                         ...room,
                         x: snapValue(x, state.snapToGrid),
                         y: snapValue(y, state.snapToGrid)
                       },
                       bounds
-                    )
-                  }
+                    ).x,
+                    clampRectToBounds(
+                      {
+                        ...room,
+                        x: snapValue(x, state.snapToGrid),
+                        y: snapValue(y, state.snapToGrid)
+                      },
+                      bounds
+                    ).y
+                  )
                 : room
             )
           };
@@ -1525,9 +1820,9 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
             ...plan,
             rooms: plan.rooms.map((room) =>
               room.id === roomId
-                ? {
-                    ...room,
-                    ...clampRectToBounds(
+                ? reshapeRoom(
+                    room,
+                    clampRectToBounds(
                       resizeRect(
                         room,
                         handle,
@@ -1536,13 +1831,51 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
                       ),
                       bounds
                     )
-                  }
+                  )
                 : room
             )
           };
         },
         {
           history: options.history,
+          selectedRoomId: roomId,
+          selectedProposedRoomId: null,
+          selectedWallId: null
+        }
+      );
+    },
+    mergeRoom(roomId: string, otherRoomId: string) {
+      mutatePlan(
+        (plan, state) => {
+          if (!canEditGeometry(state)) return plan;
+          const room = plan.rooms.find((candidate) => candidate.id === roomId);
+          const otherRoom = plan.rooms.find(
+            (candidate) => candidate.id === otherRoomId
+          );
+          if (!room || !otherRoom || room.shape || otherRoom.shape) return plan;
+
+          const shape = polygonFromRectUnion(room, otherRoom);
+          if (!shape) return plan;
+          const bounds = boundsFromPoints(shape);
+          const mergedRoom: Room = {
+            ...room,
+            name: `${room.name} + ${otherRoom.name}`,
+            type: room.type,
+            ...bounds,
+            shape
+          };
+
+          return {
+            ...plan,
+            rooms: plan.rooms
+              .filter((candidate) => candidate.id !== otherRoomId)
+              .map((candidate) =>
+                candidate.id === roomId ? mergedRoom : candidate
+              )
+          };
+        },
+        {
+          history: true,
           selectedRoomId: roomId,
           selectedProposedRoomId: null,
           selectedWallId: null
@@ -1626,23 +1959,28 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
 
           return {
             ...plan,
-            proposedRooms: plan.proposedRooms.map((room) =>
-              room.id === roomId
-                ? {
-                    ...room,
-                    ...clampProposedRect(
-                      {
-                        ...room,
-                        x: snapValue(x, state.snapToGrid),
-                        y: snapValue(y, state.snapToGrid)
-                      },
-                      room.id,
-                      plan.proposedRooms,
-                      bounds
-                    )
-                  }
-                : room
-            )
+            proposedRooms: plan.proposedRooms.map((room) => {
+              if (room.id !== roomId) return room;
+
+              const snappedRect = snapRectToRoomEdges(
+                {
+                  ...room,
+                  x: snapValue(x, state.snapToGrid),
+                  y: snapValue(y, state.snapToGrid)
+                },
+                room.id,
+                plan.proposedRooms,
+                state.snapToGrid
+              );
+              const nextRect = clampProposedRect(
+                snappedRect,
+                room.id,
+                plan.proposedRooms,
+                bounds
+              );
+
+              return translateRoom(room, nextRect.x, nextRect.y);
+            })
           };
         },
         {
@@ -1669,9 +2007,9 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
             ...plan,
             proposedRooms: plan.proposedRooms.map((room) =>
               room.id === roomId
-                ? {
-                    ...room,
-                    ...clampProposedRect(
+                ? reshapeRoom(
+                    room,
+                    clampProposedRect(
                       resizeRect(
                         room,
                         handle,
@@ -1682,7 +2020,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
                       plan.proposedRooms,
                       bounds
                     )
-                  }
+                  )
                 : room
             )
           };
@@ -1708,10 +2046,12 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
             ...plan,
             proposedRooms: plan.proposedRooms.map((room) =>
               room.id === roomId
-                ? {
-                    ...room,
-                    ...patch,
-                    ...clampProposedRect(
+                ? reshapeRoom(
+                    {
+                      ...room,
+                      ...patch
+                    },
+                    clampProposedRect(
                       {
                         ...room,
                         width: Math.max(
@@ -1727,9 +2067,49 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
                       plan.proposedRooms,
                       bounds
                     )
-                  }
+                  )
                 : room
             )
+          };
+        },
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: roomId,
+          selectedWallId: null
+        }
+      );
+    },
+    mergeProposedRoom(roomId: string, otherRoomId: string) {
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+          const room = plan.proposedRooms.find(
+            (candidate) => candidate.id === roomId
+          );
+          const otherRoom = plan.proposedRooms.find(
+            (candidate) => candidate.id === otherRoomId
+          );
+          if (!room || !otherRoom || room.shape || otherRoom.shape) return plan;
+
+          const shape = polygonFromRectUnion(room, otherRoom);
+          if (!shape) return plan;
+          const bounds = boundsFromPoints(shape);
+          const mergedRoom: ProposedRoom = {
+            ...room,
+            name: `${room.name} + ${otherRoom.name}`,
+            type: room.type,
+            ...bounds,
+            shape
+          };
+
+          return {
+            ...plan,
+            proposedRooms: plan.proposedRooms
+              .filter((candidate) => candidate.id !== otherRoomId)
+              .map((candidate) =>
+                candidate.id === roomId ? mergedRoom : candidate
+              )
           };
         },
         {

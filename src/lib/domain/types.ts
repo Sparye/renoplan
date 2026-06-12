@@ -45,10 +45,16 @@ export interface PlanRect {
   height: number;
 }
 
+export interface PlanPoint {
+  x: number;
+  y: number;
+}
+
 export interface Room extends PlanRect {
   id: string;
   name: string;
   type: RoomType;
+  shape?: PlanPoint[];
 }
 
 export type ProposedRoom = Room;

@@ -25,6 +25,7 @@
   import type { PlanBounds, ResizeHandle } from '$lib/editor/editorStore';
   import type {
     Opening,
+    PlanPoint,
     PlanRect,
     ProposedRoom,
     Room,
@@ -160,6 +161,26 @@
       2
     );
   }
+  $: roomMergeCandidates =
+    $selectedRoom && canEditGeometry
+      ? $editor.plan.rooms.filter(
+          (room) =>
+            room.id !== $selectedRoom?.id &&
+            !room.shape &&
+            !$selectedRoom?.shape &&
+            rectsTouchOrOverlap(room, $selectedRoom)
+        )
+      : [];
+  $: proposedRoomMergeCandidates =
+    $selectedProposedRoom && isScenarioMode
+      ? $editor.plan.proposedRooms.filter(
+          (room) =>
+            room.id !== $selectedProposedRoom?.id &&
+            !room.shape &&
+            !$selectedProposedRoom?.shape &&
+            rectsTouchOrOverlap(room, $selectedProposedRoom)
+        )
+      : [];
 
   function scheduleSaved() {
     clearTimeout(saveTimer);
@@ -537,6 +558,55 @@
   function wallOpenings(wall: Wall) {
     return $editor.plan.openings.filter(
       (opening) => opening.wallId === wall.id
+    );
+  }
+
+  function roomPoints(room: PlanRect & { shape?: PlanPoint[] }) {
+    return roomShapePoints(room)
+      .map((point) => `${point.x},${point.y}`)
+      .join(' ');
+  }
+
+  function roomShapePoints(room: PlanRect & { shape?: PlanPoint[] }) {
+    return room.shape && room.shape.length >= 3
+      ? room.shape
+      : [
+          { x: room.x, y: room.y },
+          { x: room.x + room.width, y: room.y },
+          { x: room.x + room.width, y: room.y + room.height },
+          { x: room.x, y: room.y + room.height }
+        ];
+  }
+
+  function sideMeasureLabels(room: PlanRect & { shape?: PlanPoint[] }) {
+    const points = roomShapePoints(room);
+
+    return points.map((point, index) => {
+      const nextPoint = points[(index + 1) % points.length];
+      const dx = nextPoint.x - point.x;
+      const dy = nextPoint.y - point.y;
+      const length = Math.hypot(dx, dy);
+      const offset = 17;
+      const normalX = length === 0 ? 0 : (dy / length) * offset;
+      const normalY = length === 0 ? 0 : (-dx / length) * offset;
+      const isVertical = Math.abs(dy) > Math.abs(dx);
+
+      return {
+        id: `${point.x}-${point.y}-${nextPoint.x}-${nextPoint.y}`,
+        x: (point.x + nextPoint.x) / 2 + normalX,
+        y: (point.y + nextPoint.y) / 2 + normalY + (isVertical ? 0 : 4),
+        label: `${pixelsToMetres(length).toFixed(2)}m`,
+        rotation: isVertical ? -90 : 0
+      };
+    });
+  }
+
+  function rectsTouchOrOverlap(first: PlanRect, second: PlanRect) {
+    return (
+      first.x <= second.x + second.width &&
+      first.x + first.width >= second.x &&
+      first.y <= second.y + second.height &&
+      first.y + first.height >= second.y
     );
   }
 
@@ -1291,6 +1361,25 @@
               </dd>
             </div>
           </dl>
+          {#if roomMergeCandidates.length > 0}
+            <div class="grid gap-2">
+              <h3 class="m-0 text-[0.78rem] font-bold text-[#66717e] uppercase">
+                Merge into irregular room
+              </h3>
+              {#each roomMergeCandidates as room (room.id)}
+                <button
+                  class="min-h-9 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-left text-sm font-bold text-[#17202a]"
+                  type="button"
+                  onclick={() => {
+                    editor.mergeRoom($selectedRoom.id, room.id);
+                    scheduleSaved();
+                  }}
+                >
+                  Merge with {room.name}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </section>
       {/if}
 
@@ -1374,6 +1463,25 @@
             <Trash2 size={16} />
             Delete room
           </button>
+          {#if proposedRoomMergeCandidates.length > 0}
+            <div class="grid gap-2">
+              <h3 class="m-0 text-[0.78rem] font-bold text-[#66717e] uppercase">
+                Merge into irregular room
+              </h3>
+              {#each proposedRoomMergeCandidates as room (room.id)}
+                <button
+                  class="min-h-9 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-left text-sm font-bold text-[#17202a]"
+                  type="button"
+                  onclick={() => {
+                    editor.mergeProposedRoom($selectedProposedRoom.id, room.id);
+                    scheduleSaved();
+                  }}
+                >
+                  Merge with {room.name}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </section>
       {/if}
 
@@ -1743,17 +1851,13 @@
                 }}
                 onkeydown={(event) => handleRoomKeydown(event, room.id)}
               >
-                <rect
+                <polygon
                   class={`cursor-default ${roomFillClasses[room.type]} ${
                     room.id === $editor.selectedRoomId
                       ? 'stroke-[#0f766e] stroke-[4]'
                       : 'stroke-[#1d2733] stroke-[3]'
                   }`}
-                  x={room.x}
-                  y={room.y}
-                  width={room.width}
-                  height={room.height}
-                  rx="2"
+                  points={roomPoints(room)}
                   vector-effect="non-scaling-stroke"
                 />
                 <text
@@ -1763,7 +1867,21 @@
                 >
                   {room.name}
                 </text>
-                {#if room.id === $editor.selectedRoomId}
+                {#if room.id === $editor.selectedRoomId && room.shape}
+                  {#each sideMeasureLabels(room) as label (label.id)}
+                    <text
+                      class="pointer-events-none select-none fill-[#344153] text-[12px] font-bold"
+                      x={label.x}
+                      y={label.y}
+                      text-anchor="middle"
+                      transform={label.rotation
+                        ? `rotate(${label.rotation} ${label.x} ${label.y})`
+                        : undefined}
+                    >
+                      {label.label}
+                    </text>
+                  {/each}
+                {:else if room.id === $editor.selectedRoomId}
                   <text
                     class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
                     x={room.x + 14}
@@ -1905,14 +2023,10 @@
 
             {#if isScenarioMode && $editor.showReferenceBackground}
               {#each $editor.baselinePlan.rooms as room (room.id)}
-                <rect
+                <polygon
                   class={`${roomFillClasses[room.type]} pointer-events-none opacity-25 stroke-[#5f6c7b] stroke-[1]`}
                   data-testid={`reference-${room.id}`}
-                  x={room.x}
-                  y={room.y}
-                  width={room.width}
-                  height={room.height}
-                  rx="2"
+                  points={roomPoints(room)}
                   vector-effect="non-scaling-stroke"
                 />
               {/each}
@@ -1928,16 +2042,12 @@
                   onclick={handleRoomClick}
                   onkeydown={(event) => handleRoomKeydown(event, room.id)}
                 >
-                  <rect
+                  <polygon
                     class="cursor-move {roomFillClasses[room.type]} {room.id ===
                     $editor.selectedRoomId
                       ? 'stroke-[#0f766e] stroke-[4]'
                       : 'stroke-[#1d2733] stroke-[3]'}"
-                    x={room.x}
-                    y={room.y}
-                    width={room.width}
-                    height={room.height}
-                    rx="2"
+                    points={roomPoints(room)}
                     vector-effect="non-scaling-stroke"
                   />
                   <text
@@ -1947,7 +2057,21 @@
                   >
                     {room.name}
                   </text>
-                  {#if room.id === $editor.selectedRoomId}
+                  {#if room.id === $editor.selectedRoomId && room.shape}
+                    {#each sideMeasureLabels(room) as label (label.id)}
+                      <text
+                        class="pointer-events-none select-none fill-[#344153] text-[12px] font-bold"
+                        x={label.x}
+                        y={label.y}
+                        text-anchor="middle"
+                        transform={label.rotation
+                          ? `rotate(${label.rotation} ${label.x} ${label.y})`
+                          : undefined}
+                      >
+                        {label.label}
+                      </text>
+                    {/each}
+                  {:else if room.id === $editor.selectedRoomId}
                     <text
                       class="pointer-events-none select-none fill-[#344153] text-[13px] font-bold"
                       x={room.x + 14}
@@ -2057,17 +2181,13 @@
                   onkeydown={(event) =>
                     handleProposedRoomKeydown(event, room.id)}
                 >
-                  <rect
+                  <polygon
                     class={`cursor-move ${roomFillClasses[room.type]} opacity-70 ${
                       room.id === $editor.selectedProposedRoomId
                         ? 'stroke-[#0f766e] stroke-[4]'
                         : 'stroke-[#0f766e] stroke-[3] [stroke-dasharray:9_7]'
                     }`}
-                    x={room.x}
-                    y={room.y}
-                    width={room.width}
-                    height={room.height}
-                    rx="2"
+                    points={roomPoints(room)}
                     vector-effect="non-scaling-stroke"
                   />
                   <text
@@ -2084,7 +2204,21 @@
                   >
                     Proposed
                   </text>
-                  {#if room.id === $editor.selectedProposedRoomId}
+                  {#if room.id === $editor.selectedProposedRoomId && room.shape}
+                    {#each sideMeasureLabels(room) as label (label.id)}
+                      <text
+                        class="pointer-events-none select-none fill-[#344153] text-[12px] font-bold"
+                        x={label.x}
+                        y={label.y}
+                        text-anchor="middle"
+                        transform={label.rotation
+                          ? `rotate(${label.rotation} ${label.x} ${label.y})`
+                          : undefined}
+                      >
+                        {label.label}
+                      </text>
+                    {/each}
+                  {:else if room.id === $editor.selectedProposedRoomId}
                     <text
                       class="pointer-events-none select-none fill-[#344153] text-[12px] font-bold"
                       x={room.x + room.width / 2}

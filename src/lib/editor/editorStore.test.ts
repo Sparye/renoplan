@@ -79,6 +79,31 @@ describe('wall derivation', () => {
     expect(walls.filter((wall) => wall.kind === 'shared')).toHaveLength(1);
     expect(walls.filter((wall) => wall.kind === 'exterior')).toHaveLength(6);
   });
+
+  it('derives exterior walls around an irregular merged room', () => {
+    const store = createEditorStore({
+      storage: new MemoryStorage(JSON.stringify(samplePlan())),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.moveRoom('room-b', 50, 50);
+    store.mergeRoom('room-a', 'room-b');
+    const state = get(store);
+
+    expect(state.plan.rooms).toHaveLength(1);
+    expect(state.plan.rooms[0].shape).toEqual([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 48 },
+      { x: 148, y: 48 },
+      { x: 148, y: 148 },
+      { x: 48, y: 148 },
+      { x: 48, y: 100 },
+      { x: 0, y: 100 }
+    ]);
+    expect(state.plan.walls).toHaveLength(8);
+    expect(state.selectedRoomId).toBe('room-a');
+  });
 });
 
 describe('baseline locking', () => {
@@ -256,6 +281,58 @@ describe('baseline locking', () => {
 });
 
 describe('scenario bounds and history', () => {
+  it('snaps proposed rooms to neighbouring edges even when dimensions are off-grid', () => {
+    let idIndex = 0;
+    const ids = [
+      'baseline-1',
+      'scenario-1',
+      'proposed-room-1',
+      'proposed-room-2'
+    ];
+    const store = createEditorStore({
+      storage: new MemoryStorage(),
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => ids[idIndex++] ?? 'id'
+    });
+
+    store.startEditorFromWholeArea(600, 500);
+    store.lockBaseline();
+    store.createRenovationPlan();
+    store.addProposedRoom('bathroom');
+    store.addProposedRoom('other');
+    store.updateProposedRoom('proposed-room-1', {
+      width: 163.2,
+      height: 288
+    });
+    store.updateProposedRoom('proposed-room-2', {
+      width: 57.6,
+      height: 82.56
+    });
+    store.moveProposedRoom('proposed-room-1', 48, 48);
+
+    const largeRoom = get(store).plan.proposedRooms.find(
+      (room) => room.id === 'proposed-room-1'
+    );
+    const smallRoom = get(store).plan.proposedRooms.find(
+      (room) => room.id === 'proposed-room-2'
+    );
+    expect(largeRoom).toBeDefined();
+    expect(smallRoom).toBeDefined();
+
+    store.moveProposedRoom(
+      'proposed-room-2',
+      (largeRoom?.x ?? 0) + (largeRoom?.width ?? 0),
+      (largeRoom?.y ?? 0) + (largeRoom?.height ?? 0) - (smallRoom?.height ?? 0),
+      { history: true }
+    );
+
+    const [nextLargeRoom, nextSmallRoom] = get(store).plan.proposedRooms;
+    expect(nextSmallRoom.x).toBeCloseTo(nextLargeRoom.x + nextLargeRoom.width);
+    expect(nextSmallRoom.y + nextSmallRoom.height).toBeCloseTo(
+      nextLargeRoom.y + nextLargeRoom.height
+    );
+  });
+
   it('clamps scenario moves and resizes to the locked baseline bounding box', () => {
     const store = createEditorStore({
       storage: new MemoryStorage(JSON.stringify(samplePlan())),
