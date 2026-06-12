@@ -18,9 +18,11 @@ export type SetupRoomKind =
   | 'garage'
   | 'other';
 
-export type WallKind = 'shared' | 'exterior';
+export type WallKind = 'shared' | 'exterior' | 'proposed';
 
 export type OpeningKind = 'door' | 'sliding-door' | 'opening' | 'window';
+
+export type WallSide = 'north' | 'east' | 'south' | 'west';
 
 export type PlanObjectKind =
   | 'fridge'
@@ -63,6 +65,7 @@ export interface Wall {
   id: string;
   kind: WallKind;
   roomIds: string[];
+  side?: WallSide;
   x1: number;
   y1: number;
   x2: number;

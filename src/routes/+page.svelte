@@ -25,13 +25,15 @@
   import type { PlanBounds, ResizeHandle } from '$lib/editor/editorStore';
   import type {
     Opening,
+    OpeningKind,
     PlanPoint,
     PlanRect,
     ProposedRoom,
     Room,
     RoomInventoryItem,
     SetupRoomKind,
-    Wall
+    Wall,
+    WallSide
   } from '$lib/domain/types';
 
   const CANVAS_WIDTH = 960;
@@ -42,7 +44,7 @@
   let interaction:
     | {
         mode: 'move';
-        target: 'room' | 'proposed-room';
+        target: 'room' | 'proposed-room' | 'scenario-wall';
         roomId: string;
         offsetX: number;
         offsetY: number;
@@ -117,6 +119,27 @@
     sw: 'cursor-sw-resize',
     nw: 'cursor-nw-resize'
   };
+
+  const openingOptions: {
+    kind: OpeningKind;
+    label: string;
+    addLabel: string;
+  }[] = [
+    { kind: 'door', label: 'Door', addLabel: 'Add door/opening' },
+    { kind: 'window', label: 'Window', addLabel: 'Add window' },
+    {
+      kind: 'sliding-door',
+      label: 'Sliding door',
+      addLabel: 'Add sliding door'
+    }
+  ];
+
+  const roomSideOptions: { side: WallSide; label: string }[] = [
+    { side: 'north', label: 'North' },
+    { side: 'east', label: 'East' },
+    { side: 'south', label: 'South' },
+    { side: 'west', label: 'West' }
+  ];
 
   $: totalRooms = Object.values(counts).reduce((sum, count) => sum + count, 0);
   $: measuredRooms = $editor.inventory.filter((room) => room.measured).length;
@@ -219,6 +242,12 @@
             rectsTouchOrOverlap(room, $selectedProposedRoom)
         )
       : [];
+  $: scenarioWallSurfaces = isScenarioMode
+    ? [
+        ...$editor.baselinePlan.walls,
+        ...$editor.plan.walls.filter((wall) => wall.kind === 'proposed')
+      ]
+    : [];
 
   function scheduleSaved() {
     clearTimeout(saveTimer);
@@ -558,10 +587,21 @@
   function handleWallPointerDown(event: PointerEvent, wallId: string) {
     event.stopPropagation();
     addRoomMenuOpen = false;
-    const wall = $editor.plan.walls.find(
-      (candidate) => candidate.id === wallId
-    );
+    const wall =
+      $editor.plan.walls.find((candidate) => candidate.id === wallId) ??
+      $editor.baselinePlan.walls.find((candidate) => candidate.id === wallId);
     const point = getCanvasPoint(event);
+    if (isScenarioMode && wall?.kind === 'proposed' && !wall.side) {
+      interaction = {
+        mode: 'move',
+        target: 'scenario-wall',
+        roomId: wall.id,
+        offsetX: point.x - wall.x1,
+        offsetY: point.y - wall.y1,
+        historyCaptured: false
+      };
+      canvas.setPointerCapture(event.pointerId);
+    }
     wallMenu = {
       wallId,
       x: event.clientX,
@@ -591,6 +631,11 @@
       const y = point.y - currentInteraction.offsetY;
       if (currentInteraction.target === 'proposed-room') {
         editor.moveProposedRoom(currentInteraction.roomId, x, y, {
+          history: !currentInteraction.historyCaptured
+        });
+      } else if (currentInteraction.target === 'scenario-wall') {
+        wallMenu = null;
+        editor.moveScenarioWall(currentInteraction.roomId, x, y, {
           history: !currentInteraction.historyCaptured
         });
       } else {
@@ -713,6 +758,33 @@
     return $editor.plan.openings.filter(
       (opening) => opening.wallId === wall.id
     );
+  }
+
+  function proposedRoomSideWall(roomId: string, side: WallSide) {
+    return $editor.plan.walls.find(
+      (wall) =>
+        wall.kind === 'proposed' &&
+        wall.side === side &&
+        wall.roomIds.includes(roomId)
+    );
+  }
+
+  function wallKindLabel(kind: Wall['kind']) {
+    if (kind === 'shared') return 'shared';
+    if (kind === 'exterior') return 'exterior';
+    return 'proposed';
+  }
+
+  function openingLabel(kind: OpeningKind) {
+    return (
+      openingOptions.find((option) => option.kind === kind)?.label ?? 'Opening'
+    );
+  }
+
+  function openingStrokeClass(kind: OpeningKind) {
+    if (kind === 'window') return 'stroke-[#2563eb]';
+    if (kind === 'sliding-door') return 'stroke-[#7c3aed]';
+    return 'stroke-[#0f766e]';
   }
 
   function roomPoints(room: PlanRect & { shape?: PlanPoint[] }) {
@@ -1694,6 +1766,146 @@
               />
             </label>
           </div>
+          <div class="grid gap-2">
+            <h3 class="m-0 text-[0.78rem] font-bold text-[#66717e] uppercase">
+              Add to room side
+            </h3>
+            {#each roomSideOptions as sideOption (sideOption.side)}
+              {@const sideWall = proposedRoomSideWall(
+                $selectedProposedRoom.id,
+                sideOption.side
+              )}
+              <div class="grid gap-1">
+                <span class="text-xs font-bold text-[#66717e]">
+                  {sideOption.label}
+                </span>
+                <div class="grid grid-cols-3 gap-1">
+                  {#each openingOptions as option (option.kind)}
+                    <button
+                      class="min-h-8 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-2 text-xs font-bold text-[#17202a]"
+                      type="button"
+                      onclick={() => {
+                        editor.addOpeningToProposedRoomSide(
+                          $selectedProposedRoom.id,
+                          sideOption.side,
+                          option.kind
+                        );
+                        scheduleSaved();
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  {/each}
+                </div>
+                {#if sideWall && wallOpenings(sideWall).length > 0}
+                  <div
+                    class="grid gap-2 rounded-md border border-[#d8dee5] p-2"
+                  >
+                    {#each wallOpenings(sideWall) as opening (opening.id)}
+                      {@const sideLength = Math.hypot(
+                        sideWall.x2 - sideWall.x1,
+                        sideWall.y2 - sideWall.y1
+                      )}
+                      {@const maxOffset = Math.max(
+                        0,
+                        sideLength - opening.width
+                      )}
+                      <div
+                        class="grid gap-2 border-b border-[#e4e9ee] pb-2 last:border-b-0 last:pb-0"
+                      >
+                        <div class="flex items-center justify-between gap-2">
+                          <strong class="text-xs">
+                            {openingLabel(opening.kind)}
+                          </strong>
+                          <span class="text-[0.7rem] font-bold text-[#66717e]">
+                            {pixelsToMetres(opening.width).toFixed(2)}m
+                          </span>
+                        </div>
+                        <label
+                          class="grid gap-1 text-xs font-bold text-[#66717e]"
+                        >
+                          Position along wall
+                          <input
+                            type="range"
+                            min="0"
+                            max={maxOffset}
+                            step={$editor.snapToGrid ? GRID_SIZE : 1}
+                            value={opening.offset}
+                            oninput={(event) => {
+                              editor.updateOpening(opening.id, {
+                                offset: Number(event.currentTarget.value)
+                              });
+                              scheduleSaved();
+                            }}
+                          />
+                        </label>
+                        <div class="grid grid-cols-2 gap-2">
+                          <label
+                            class="grid gap-1 text-xs font-bold text-[#66717e]"
+                          >
+                            Position m
+                            <input
+                              class="min-h-8 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                              inputmode="decimal"
+                              min="0"
+                              step="0.25"
+                              type="number"
+                              value={openingMeasurementValue(opening, 'offset')}
+                              onfocus={(event) =>
+                                focusOpeningMeasurement(
+                                  event,
+                                  opening,
+                                  'offset'
+                                )}
+                              onclick={selectInputValue}
+                              onblur={() => {
+                                openingMeasurementEditing = null;
+                              }}
+                              oninput={(event) =>
+                                updateOpeningMeasurementDraft(
+                                  opening.id,
+                                  'offset',
+                                  event.currentTarget.value
+                                )}
+                            />
+                          </label>
+                          <label
+                            class="grid gap-1 text-xs font-bold text-[#66717e]"
+                          >
+                            Length m
+                            <input
+                              class="min-h-8 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                              inputmode="decimal"
+                              min="0.25"
+                              step="0.25"
+                              type="number"
+                              value={openingMeasurementValue(opening, 'width')}
+                              onfocus={(event) =>
+                                focusOpeningMeasurement(
+                                  event,
+                                  opening,
+                                  'width'
+                                )}
+                              onclick={selectInputValue}
+                              onblur={() => {
+                                openingMeasurementEditing = null;
+                              }}
+                              oninput={(event) =>
+                                updateOpeningMeasurementDraft(
+                                  opening.id,
+                                  'width',
+                                  event.currentTarget.value
+                                )}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
           <button
             class="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
             type="button"
@@ -1738,7 +1950,7 @@
                 Type
               </dt>
               <dd class="m-0 text-sm font-bold text-[#17202a]">
-                {$selectedWall.kind}
+                {wallKindLabel($selectedWall.kind)}
               </dd>
             </div>
             <div class="flex items-baseline justify-between gap-4">
@@ -1776,11 +1988,29 @@
                 {@const maxOffset = Math.max(0, length - opening.width)}
                 <div class="grid gap-2 rounded-md border border-[#d8dee5] p-3">
                   <div class="flex items-center justify-between gap-3">
-                    <strong class="text-sm">Door</strong>
+                    <strong class="text-sm">{openingLabel(opening.kind)}</strong
+                    >
                     <span class="text-xs font-bold text-[#66717e]">
                       {pixelsToMetres(opening.offset).toFixed(2)}m from start
                     </span>
                   </div>
+                  <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+                    Type
+                    <select
+                      class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                      value={opening.kind}
+                      onchange={(event) => {
+                        editor.updateOpening(opening.id, {
+                          kind: event.currentTarget.value as OpeningKind
+                        });
+                        scheduleSaved();
+                      }}
+                    >
+                      {#each openingOptions as option (option.kind)}
+                        <option value={option.kind}>{option.label}</option>
+                      {/each}
+                    </select>
+                  </label>
                   <label class="grid gap-1 text-xs font-bold text-[#66717e]">
                     Position
                     <input
@@ -1822,7 +2052,7 @@
                       />
                     </label>
                     <label class="grid gap-1 text-xs font-bold text-[#66717e]">
-                      Width m
+                      Length m
                       <input
                         class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                         inputmode="decimal"
@@ -1847,6 +2077,85 @@
                   </div>
                 </div>
               {/each}
+            </div>
+          {/if}
+          {#if isScenarioMode && $selectedWall.kind === 'proposed' && !$selectedWall.side}
+            {@const selectedWallLength = Math.hypot(
+              $selectedWall.x2 - $selectedWall.x1,
+              $selectedWall.y2 - $selectedWall.y1
+            )}
+            <div class="grid gap-2">
+              <h3 class="m-0 text-[0.78rem] font-bold text-[#66717e] uppercase">
+                Proposed wall
+              </h3>
+              <div class="grid grid-cols-2 gap-2">
+                <button
+                  class="min-h-9 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+                  type="button"
+                  onclick={() => {
+                    editor.updateScenarioWall($selectedWall.id, {
+                      x2: $selectedWall.x1 + selectedWallLength,
+                      y2: $selectedWall.y1
+                    });
+                    scheduleSaved();
+                  }}
+                >
+                  Horizontal
+                </button>
+                <button
+                  class="min-h-9 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+                  type="button"
+                  onclick={() => {
+                    editor.updateScenarioWall($selectedWall.id, {
+                      x2: $selectedWall.x1,
+                      y2: $selectedWall.y1 + selectedWallLength
+                    });
+                    scheduleSaved();
+                  }}
+                >
+                  Vertical
+                </button>
+              </div>
+              <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+                Length m
+                <input
+                  class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                  inputmode="decimal"
+                  min="0.25"
+                  step="0.25"
+                  type="number"
+                  value={pixelsToMetres(selectedWallLength).toFixed(2)}
+                  onfocus={queueSelectInputValue}
+                  onclick={selectInputValue}
+                  oninput={(event) => {
+                    const pixels = pixelsFromMetres(event.currentTarget.value);
+                    if (pixels === null) return;
+                    const horizontal =
+                      Math.abs($selectedWall.x2 - $selectedWall.x1) >=
+                      Math.abs($selectedWall.y2 - $selectedWall.y1);
+                    editor.updateScenarioWall($selectedWall.id, {
+                      x2: horizontal
+                        ? $selectedWall.x1 + pixels
+                        : $selectedWall.x1,
+                      y2: horizontal
+                        ? $selectedWall.y1
+                        : $selectedWall.y1 + pixels
+                    });
+                    scheduleSaved();
+                  }}
+                />
+              </label>
+              <button
+                class="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+                type="button"
+                onclick={() => {
+                  editor.deleteScenarioWall($selectedWall.id);
+                  scheduleSaved();
+                }}
+              >
+                <Trash2 size={16} />
+                Delete wall
+              </button>
             </div>
           {/if}
         </section>
@@ -1928,6 +2237,21 @@
               {/if}
             </div>
           {/if}
+          {#if isScenarioMode}
+            <button
+              class="inline-flex min-h-9 items-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+              type="button"
+              onclick={() => {
+                wallMenu = null;
+                addRoomMenuOpen = false;
+                editor.addScenarioWall();
+                scheduleSaved();
+              }}
+            >
+              <Plus size={16} />
+              Add wall
+            </button>
+          {/if}
           <button
             class="grid size-9 place-items-center rounded-md border border-[#c8d1dc] bg-[#f8fafc] text-[#17202a] disabled:cursor-not-allowed disabled:opacity-40"
             type="button"
@@ -1992,50 +2316,58 @@
             role="menu"
             aria-label="Wall actions"
           >
-            <button
-              class="min-h-9 rounded-[4px] px-3 text-left text-sm font-bold text-[#17202a] hover:bg-[#eef2f6]"
-              type="button"
-              role="menuitem"
-              onclick={() => {
-                editor.updateWall($selectedWall.id, {
-                  structural: !$selectedWall.structural
-                });
-                wallMenu = null;
-                scheduleSaved();
-              }}
-            >
-              {$selectedWall.structural
-                ? 'Clear structural mark'
-                : 'Mark structural'}
-            </button>
-            {#if $selectedWall.kind !== 'exterior'}
+            {#if !isScenarioMode}
               <button
                 class="min-h-9 rounded-[4px] px-3 text-left text-sm font-bold text-[#17202a] hover:bg-[#eef2f6]"
                 type="button"
                 role="menuitem"
                 onclick={() => {
                   editor.updateWall($selectedWall.id, {
-                    removed: !$selectedWall.removed
+                    structural: !$selectedWall.structural
                   });
                   wallMenu = null;
                   scheduleSaved();
                 }}
               >
-                Remove wall
+                {$selectedWall.structural
+                  ? 'Clear structural mark'
+                  : 'Mark structural'}
               </button>
+              {#if $selectedWall.kind !== 'exterior'}
+                <button
+                  class="min-h-9 rounded-[4px] px-3 text-left text-sm font-bold text-[#17202a] hover:bg-[#eef2f6]"
+                  type="button"
+                  role="menuitem"
+                  onclick={() => {
+                    editor.updateWall($selectedWall.id, {
+                      removed: !$selectedWall.removed
+                    });
+                    wallMenu = null;
+                    scheduleSaved();
+                  }}
+                >
+                  Remove wall
+                </button>
+              {/if}
             {/if}
-            <button
-              class="min-h-9 rounded-[4px] px-3 text-left text-sm font-bold text-[#17202a] hover:bg-[#eef2f6]"
-              type="button"
-              role="menuitem"
-              onclick={() => {
-                editor.addOpening($selectedWall.id, wallMenu?.offset);
-                wallMenu = null;
-                scheduleSaved();
-              }}
-            >
-              Add door/opening
-            </button>
+            {#each openingOptions as option (option.kind)}
+              <button
+                class="min-h-9 rounded-[4px] px-3 text-left text-sm font-bold text-[#17202a] hover:bg-[#eef2f6]"
+                type="button"
+                role="menuitem"
+                onclick={() => {
+                  editor.addOpening(
+                    $selectedWall.id,
+                    wallMenu?.offset,
+                    option.kind
+                  );
+                  wallMenu = null;
+                  scheduleSaved();
+                }}
+              >
+                {option.addLabel}
+              </button>
+            {/each}
           </div>
         {/if}
 
@@ -2196,7 +2528,7 @@
                       y2={position.y2}
                     />
                     <line
-                      class="pointer-events-none stroke-[#0f766e] stroke-[2]"
+                      class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[2]`}
                       x1={position.x1}
                       y1={position.y1}
                       x2={position.x2}
@@ -2387,7 +2719,7 @@
                         y2={position.y2}
                       />
                       <line
-                        class="pointer-events-none stroke-[#0f766e] stroke-[2]"
+                        class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[2]`}
                         x1={position.x1}
                         y1={position.y1}
                         x2={position.x2}
@@ -2513,6 +2845,72 @@
                     {/each}
                   {/if}
                 </g>
+              {/each}
+            {/if}
+
+            {#if isScenarioMode}
+              {#each scenarioWallSurfaces as wall (wall.id)}
+                {#if !wall.removed}
+                  {@const hitbox = wallHitbox(wall)}
+                  <g
+                    role="button"
+                    tabindex="0"
+                    data-testid={`scenario-${wall.id}`}
+                    aria-label={wall.kind === 'shared'
+                      ? `Select proposed opening surface between ${wall.roomIds.join(' and ')}`
+                      : wall.kind === 'proposed' && wall.side
+                        ? `Select ${wall.side} side opening surface`
+                        : `Select proposed opening surface`}
+                    onpointerdown={(event) =>
+                      handleWallPointerDown(event, wall.id)}
+                    onclick={handleWallClick}
+                    onkeydown={(event) => handleWallKeydown(event, wall.id)}
+                  >
+                    <rect
+                      class="cursor-pointer fill-black opacity-[0.01]"
+                      data-testid={`scenario-${wall.id}-hitbox`}
+                      x={hitbox.x}
+                      y={hitbox.y}
+                      width={hitbox.width}
+                      height={hitbox.height}
+                    />
+                    <line
+                      class={`pointer-events-none ${
+                        wall.kind === 'proposed' && wall.side
+                          ? 'stroke-[#0f766e]'
+                          : 'stroke-[#5f6c7b]'
+                      } ${
+                        wall.id === $editor.selectedWallId
+                          ? 'stroke-[6]'
+                          : 'stroke-[3]'
+                      }`}
+                      x1={wall.x1}
+                      y1={wall.y1}
+                      x2={wall.x2}
+                      y2={wall.y2}
+                      stroke-dasharray={wall.kind === 'proposed' && wall.side
+                        ? undefined
+                        : '8 7'}
+                    />
+                    {#each wallOpenings(wall) as opening (opening.id)}
+                      {@const position = openingPosition(wall, opening)}
+                      <line
+                        class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
+                        x1={position.x1}
+                        y1={position.y1}
+                        x2={position.x2}
+                        y2={position.y2}
+                      />
+                      <line
+                        class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[3]`}
+                        x1={position.x1}
+                        y1={position.y1}
+                        x2={position.x2}
+                        y2={position.y2}
+                      />
+                    {/each}
+                  </g>
+                {/if}
               {/each}
             {/if}
           </svg>

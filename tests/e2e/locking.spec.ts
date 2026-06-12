@@ -277,7 +277,14 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await expect(page.getByTestId('reference-bedroom-1')).toHaveCount(0);
   await expect(page.getByTestId('scenario-bounds')).toBeVisible();
   await page.getByLabel('Reference background').check();
-  await expect(page.getByRole('button', { name: 'Add wall' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add wall' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Selected wall' })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Proposed wall' })
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Delete wall' }).click();
   await page.getByRole('button', { name: 'Add room' }).click();
   await page.getByRole('menuitem', { name: 'Bathroom' }).click();
   await expect(
@@ -315,12 +322,28 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   expect(draggedBox?.x).toBeGreaterThanOrEqual(scenarioBox.x);
   expect(draggedBox?.x).toBeLessThan(900);
 
+  await proposedRoom.click();
+  await page.getByRole('button', { name: 'Window' }).first().click();
+  await expect(page.getByLabel('Position along wall')).toBeVisible();
+
   await page.getByRole('button', { name: 'Baseline' }).click();
   await expect(
     page.getByText('Baseline · Locked existing layout')
   ).toBeVisible();
   await page.getByRole('button', { name: 'Renovation 1' }).click();
   await expect(page.getByText('Renovation 1 · Proposed layout')).toBeVisible();
+  await proposedRoom.click();
+  const positionSlider = page.getByLabel('Position along wall');
+  await positionSlider.evaluate((input) => {
+    if (input instanceof HTMLInputElement) {
+      input.value = '24';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  await expect(
+    page.getByRole('heading', { name: 'Proposed room' })
+  ).toBeVisible();
+  await expect(positionSlider).toBeVisible();
 
   await page.getByRole('button', { name: 'All projects' }).click();
   await expect(page.getByText('Renoplan dashboard')).toBeVisible();

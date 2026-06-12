@@ -316,6 +316,37 @@ describe('baseline locking', () => {
     );
   });
 
+  it('keeps the left edge fixed when a baseline room grows into the right footprint edge', () => {
+    const store = createEditorStore({
+      storage: new MemoryStorage(),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.createInventory({
+      bedroom: 0,
+      toilet: 0,
+      bathroom: 0,
+      kitchen: 1,
+      living: 0,
+      dining: 0,
+      laundry: 0,
+      storage: 0,
+      garage: 0,
+      other: 0
+    });
+    store.startEditorFromInventoryWithinWholeArea(528, 384);
+    store.resizeRoom('kitchen-1', 'e', 900, 72, { history: true });
+
+    expect(
+      get(store).plan.rooms.find((room) => room.id === 'kitchen-1')
+    ).toEqual(
+      expect.objectContaining({
+        x: 72,
+        width: 504
+      })
+    );
+  });
+
   it('blocks locking an empty baseline', () => {
     const store = createEditorStore({
       storage: new MemoryStorage(),
@@ -849,7 +880,12 @@ describe('scenario bounds and history', () => {
     store.resizeProposedRoom('proposed-room-1', 'e', 400, 100, {
       history: true
     });
-    expect(get(store).plan.proposedRooms[0].width).toBe(200);
+    expect(get(store).plan.proposedRooms[0]).toEqual(
+      expect.objectContaining({
+        x: 56,
+        width: 144
+      })
+    );
   });
 
   it('keeps separate undo and redo stacks for baseline and scenario modes', () => {
@@ -949,7 +985,12 @@ describe('scenario bounds and history', () => {
     store.resizeProposedRoom('proposed-room-1', 'e', 400, 100, {
       history: true
     });
-    expect(get(store).plan.proposedRooms[0].width).toBe(200);
+    expect(get(store).plan.proposedRooms[0]).toEqual(
+      expect.objectContaining({
+        x: 56,
+        width: 144
+      })
+    );
 
     store.updateProposedRoom('proposed-room-1', { name: 'New study' });
     expect(get(store).plan.proposedRooms[0].name).toBe('New study');
@@ -1019,5 +1060,244 @@ describe('scenario bounds and history', () => {
         width: 72
       })
     );
+  });
+
+  it('adds door, window, and sliding door openings to renovation scenarios', () => {
+    let idIndex = 0;
+    const ids = ['baseline-1', 'scenario-1', 'opening-1', 'opening-2'];
+    const storage = new MemoryStorage(JSON.stringify(samplePlan()));
+    const store = createEditorStore({
+      storage,
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => ids[idIndex++] ?? 'id'
+    });
+
+    store.lockBaseline();
+    store.createRenovationPlan();
+    const wallId = get(store).lockedBaseline?.plan.walls.find(
+      (wall) => wall.id === 'wall-room-a-north-0-100'
+    )?.id;
+
+    expect(wallId).toBeDefined();
+    store.addOpening(wallId ?? '', 24, 'window');
+    store.addOpening(wallId ?? '', 48, 'sliding-door');
+    store.updateOpening('opening-1', { kind: 'door' });
+
+    expect(get(store).plan.openings).toEqual([
+      expect.objectContaining({
+        id: 'opening-1',
+        wallId,
+        kind: 'door'
+      }),
+      expect.objectContaining({
+        id: 'opening-2',
+        wallId,
+        kind: 'sliding-door'
+      })
+    ]);
+
+    const reloaded = createEditorStore({ storage });
+    reloaded.openScenario('baseline-1', 'scenario-1');
+
+    expect(get(reloaded).plan.openings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'opening-1', kind: 'door' }),
+        expect.objectContaining({ id: 'opening-2', kind: 'sliding-door' })
+      ])
+    );
+  });
+
+  it('adds proposed walls to renovation scenarios and keeps their openings', () => {
+    let idIndex = 0;
+    const ids = ['baseline-1', 'scenario-1', 'wall-1', 'opening-1'];
+    const storage = new MemoryStorage(JSON.stringify(samplePlan()));
+    const store = createEditorStore({
+      storage,
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => ids[idIndex++] ?? 'id'
+    });
+
+    store.lockBaseline();
+    store.createRenovationPlan();
+    store.addScenarioWall();
+    store.updateScenarioWall('wall-1', { x1: 24, y1: 24, x2: 124, y2: 24 });
+    store.addOpening('wall-1', 24, 'door');
+
+    expect(get(store).plan.walls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'wall-1',
+          kind: 'proposed',
+          x1: 24,
+          y1: 24,
+          x2: 120,
+          y2: 24
+        })
+      ])
+    );
+    expect(get(store).plan.openings).toEqual([
+      expect.objectContaining({ id: 'opening-1', wallId: 'wall-1' })
+    ]);
+
+    const reloaded = createEditorStore({ storage });
+    reloaded.openScenario('baseline-1', 'scenario-1');
+
+    expect(get(reloaded).plan.walls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'wall-1', kind: 'proposed' })
+      ])
+    );
+    expect(get(reloaded).plan.openings).toEqual([
+      expect.objectContaining({ id: 'opening-1', wallId: 'wall-1' })
+    ]);
+
+    reloaded.deleteScenarioWall('wall-1');
+
+    expect(get(reloaded).plan.walls).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'wall-1' })])
+    );
+    expect(get(reloaded).plan.openings).toEqual([]);
+  });
+
+  it('moves free proposed walls in renovation scenarios', () => {
+    let idIndex = 0;
+    const ids = ['baseline-1', 'scenario-1', 'wall-1'];
+    const store = createEditorStore({
+      storage: new MemoryStorage(JSON.stringify(samplePlan())),
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => ids[idIndex++] ?? 'id'
+    });
+
+    store.lockBaseline();
+    store.createRenovationPlan();
+    store.addScenarioWall();
+    const before = get(store).plan.walls.find((wall) => wall.id === 'wall-1');
+
+    expect(before).toBeDefined();
+    store.moveScenarioWall('wall-1', 24, 24, { history: true });
+
+    const after = get(store).plan.walls.find((wall) => wall.id === 'wall-1');
+    expect(after).toEqual(
+      expect.objectContaining({
+        x1: 24,
+        y1: 24,
+        x2: (before?.x2 ?? 0) - (before?.x1 ?? 0) + 24,
+        y2: 24
+      })
+    );
+  });
+
+  it('adds openings from a selected proposed room side and keeps them attached when moved', () => {
+    let idIndex = 0;
+    const ids = ['baseline-1', 'scenario-1', 'proposed-room-1', 'opening-1'];
+    const store = createEditorStore({
+      storage: new MemoryStorage(JSON.stringify(samplePlan())),
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => ids[idIndex++] ?? 'id'
+    });
+
+    store.lockBaseline();
+    store.createRenovationPlan();
+    store.addProposedRoom('bathroom');
+    store.addOpeningToProposedRoomSide(
+      'proposed-room-1',
+      'east',
+      'sliding-door'
+    );
+
+    let wall = get(store).plan.walls.find(
+      (candidate) => candidate.id === 'wall-proposed-room-1-east-proposed'
+    );
+
+    expect(wall).toEqual(
+      expect.objectContaining({
+        kind: 'proposed',
+        roomIds: ['proposed-room-1'],
+        side: 'east'
+      })
+    );
+    expect(get(store).plan.openings).toEqual([
+      expect.objectContaining({
+        id: 'opening-1',
+        wallId: 'wall-proposed-room-1-east-proposed',
+        kind: 'sliding-door'
+      })
+    ]);
+
+    store.moveProposedRoom('proposed-room-1', 48, 48, { history: true });
+    const room = get(store).plan.proposedRooms.find(
+      (candidate) => candidate.id === 'proposed-room-1'
+    );
+    wall = get(store).plan.walls.find(
+      (candidate) => candidate.id === 'wall-proposed-room-1-east-proposed'
+    );
+
+    expect(wall).toEqual(
+      expect.objectContaining({
+        x1: (room?.x ?? 0) + (room?.width ?? 0),
+        y1: room?.y,
+        x2: (room?.x ?? 0) + (room?.width ?? 0),
+        y2: (room?.y ?? 0) + (room?.height ?? 0)
+      })
+    );
+  });
+
+  it('updates window length and position on a proposed room side', () => {
+    let idIndex = 0;
+    const ids = ['baseline-1', 'scenario-1', 'proposed-room-1', 'opening-1'];
+    const store = createEditorStore({
+      storage: new MemoryStorage(JSON.stringify(samplePlan())),
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => ids[idIndex++] ?? 'id'
+    });
+
+    store.lockBaseline();
+    store.createRenovationPlan();
+    store.addProposedRoom('bathroom');
+    store.addOpeningToProposedRoomSide('proposed-room-1', 'north', 'window');
+    store.updateOpening('opening-1', { offset: 24, width: 72 });
+
+    expect(get(store).plan.openings[0]).toEqual(
+      expect.objectContaining({
+        kind: 'window',
+        offset: 24,
+        width: 72
+      })
+    );
+
+    store.updateOpening('opening-1', { offset: 500, width: 240 });
+    const wall = get(store).plan.walls.find(
+      (candidate) => candidate.id === 'wall-proposed-room-1-north-proposed'
+    );
+
+    expect(get(store).plan.openings[0]).toEqual(
+      expect.objectContaining({
+        width: Math.min(
+          240,
+          wall ? Math.hypot(wall.x2 - wall.x1, wall.y2 - wall.y1) : 0
+        ),
+        offset: 0
+      })
+    );
+  });
+
+  it('keeps the proposed room selected when editing a side opening', () => {
+    let idIndex = 0;
+    const ids = ['baseline-1', 'scenario-1', 'proposed-room-1', 'opening-1'];
+    const store = createEditorStore({
+      storage: new MemoryStorage(JSON.stringify(samplePlan())),
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => ids[idIndex++] ?? 'id'
+    });
+
+    store.lockBaseline();
+    store.createRenovationPlan();
+    store.addProposedRoom('bathroom');
+    store.addOpeningToProposedRoomSide('proposed-room-1', 'north', 'window');
+    store.selectProposedRoom('proposed-room-1');
+    store.updateOpening('opening-1', { offset: 24 });
+
+    expect(get(store).selectedProposedRoomId).toBe('proposed-room-1');
+    expect(get(store).selectedWallId).toBeNull();
   });
 });

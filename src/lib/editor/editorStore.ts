@@ -1,7 +1,8 @@
 import { browser } from '$app/environment';
-import { derived, writable } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
 import type {
   Opening,
+  OpeningKind,
   PlanDocument,
   PlanPoint,
   PlanRect,
@@ -10,7 +11,8 @@ import type {
   RoomInventoryItem,
   RoomType,
   SetupRoomKind,
-  Wall
+  Wall,
+  WallSide
 } from '$lib/domain/types';
 
 export const GRID_SIZE = 24;
@@ -205,8 +207,30 @@ const exteriorWallId = (
   end: number
 ) => `wall-${roomId}-${side}-${Math.round(start)}-${Math.round(end)}`;
 
+const proposedRoomSideWallId = (roomId: string, side: WallSide) =>
+  `wall-${roomId}-${side}-proposed`;
+
 const wallLength = (wall: Wall) =>
   Math.hypot(wall.x2 - wall.x1, wall.y2 - wall.y1);
+
+function wallGeometryForRoomSide(room: PlanRect, side: WallSide) {
+  const right = room.x + room.width;
+  const bottom = room.y + room.height;
+
+  if (side === 'north') {
+    return { x1: room.x, y1: room.y, x2: right, y2: room.y };
+  }
+
+  if (side === 'south') {
+    return { x1: room.x, y1: bottom, x2: right, y2: bottom };
+  }
+
+  if (side === 'west') {
+    return { x1: room.x, y1: room.y, x2: room.x, y2: bottom };
+  }
+
+  return { x1: right, y1: room.y, x2: right, y2: bottom };
+}
 
 const clampOpeningOffset = (
   wall: Wall,
@@ -833,17 +857,55 @@ export function deriveWalls(plan: PlanDocument): Wall[] {
   return [...sharedWalls, ...exteriorWalls];
 }
 
-function normalisePlan(plan: PlanDocument): PlanDocument {
+function normalisePlan(
+  plan: PlanDocument,
+  extraOpeningWallIds: Iterable<string> = []
+): PlanDocument {
   const shapedPlan = {
     ...plan,
     rooms: plan.rooms.map(withRoomBounds),
     proposedRooms: (plan.proposedRooms ?? []).map(withRoomBounds)
   };
-  const walls = deriveWalls(shapedPlan);
-  const wallIds = new Set(walls.map((wall) => wall.id));
-  const openings = shapedPlan.openings.filter((opening) =>
-    wallIds.has(opening.wallId)
+  const proposedRoomsById = new Map(
+    shapedPlan.proposedRooms.map((room) => [room.id, room])
   );
+  const proposedWalls = shapedPlan.walls
+    .filter((wall) => wall.kind === 'proposed')
+    .map((wall) => {
+      const attachedRoom = wall.side
+        ? proposedRoomsById.get(wall.roomIds[0])
+        : undefined;
+
+      return {
+        ...wall,
+        roomIds: [...wall.roomIds],
+        ...(attachedRoom && wall.side
+          ? wallGeometryForRoomSide(attachedRoom, wall.side)
+          : {})
+      };
+    });
+  const walls = [...deriveWalls(shapedPlan), ...proposedWalls];
+  const wallIds = new Set([
+    ...walls.map((wall) => wall.id),
+    ...extraOpeningWallIds
+  ]);
+  const wallsById = new Map(walls.map((wall) => [wall.id, wall]));
+  const openings = shapedPlan.openings
+    .filter((opening) => wallIds.has(opening.wallId))
+    .map((opening) => {
+      const wall = wallsById.get(opening.wallId);
+      if (!wall) return opening;
+      const width = Math.min(
+        Math.max(GRID_SIZE, opening.width),
+        wallLength(wall)
+      );
+
+      return {
+        ...opening,
+        width,
+        offset: clampOpeningOffset(wall, { ...opening, width })
+      };
+    });
 
   return {
     ...clonePlan(shapedPlan),
@@ -854,13 +916,14 @@ function normalisePlan(plan: PlanDocument): PlanDocument {
 
 function normaliseSavedBaseline(baseline: SavedBaseline): SavedBaseline {
   const plan = normalisePlan(baseline.plan);
+  const scenarioWallIds = plan.walls.map((wall) => wall.id);
   return {
     ...baseline,
     bounds: derivePlanBounds(plan) ?? baseline.bounds,
     plan,
     scenarios: (baseline.scenarios ?? []).map((scenario) => ({
       ...scenario,
-      plan: normalisePlan(scenario.plan),
+      plan: normalisePlan(scenario.plan, scenarioWallIds),
       showReferenceBackground: scenario.showReferenceBackground ?? true
     }))
   };
@@ -907,7 +970,10 @@ function normaliseEnvelope(envelope: EditorEnvelope): EditorEnvelope {
       }
     : null;
   const scenarioPlan = envelope.scenarioPlan
-    ? normalisePlan(envelope.scenarioPlan)
+    ? normalisePlan(
+        envelope.scenarioPlan,
+        lockedBaseline?.plan.walls.map((wall) => wall.id) ?? []
+      )
     : null;
   const scenarioIsLegacyBaselineCopy =
     Boolean(lockedBaseline && scenarioPlan) &&
@@ -1114,6 +1180,60 @@ function clampRectToBounds<T extends PlanRect>(
       y: point.y + dy
     }))
   };
+}
+
+function clampResizedRectToBounds(
+  rect: PlanRect,
+  handle: ResizeHandle,
+  bounds: PlanBounds | null
+): PlanRect {
+  if (!bounds) return rect;
+
+  const boundsRight = bounds.x + bounds.width;
+  const boundsBottom = bounds.y + bounds.height;
+  const next = { ...rect };
+
+  if (handle.includes('e')) {
+    next.x = Math.max(next.x, bounds.x);
+    next.width = Math.min(next.width, boundsRight - next.x);
+    if (next.width < MIN_ROOM_SIZE) {
+      next.width = Math.min(MIN_ROOM_SIZE, bounds.width);
+      next.x = Math.min(next.x, boundsRight - next.width);
+    }
+  } else if (handle.includes('w')) {
+    const right = Math.min(next.x + next.width, boundsRight);
+    next.x = Math.max(next.x, bounds.x);
+    next.width = right - next.x;
+    if (next.width < MIN_ROOM_SIZE) {
+      next.width = Math.min(MIN_ROOM_SIZE, bounds.width);
+      next.x = right - next.width;
+    }
+  } else {
+    next.width = Math.min(next.width, bounds.width);
+    next.x = Math.min(Math.max(next.x, bounds.x), boundsRight - next.width);
+  }
+
+  if (handle.includes('s')) {
+    next.y = Math.max(next.y, bounds.y);
+    next.height = Math.min(next.height, boundsBottom - next.y);
+    if (next.height < MIN_ROOM_SIZE) {
+      next.height = Math.min(MIN_ROOM_SIZE, bounds.height);
+      next.y = Math.min(next.y, boundsBottom - next.height);
+    }
+  } else if (handle.includes('n')) {
+    const bottom = Math.min(next.y + next.height, boundsBottom);
+    next.y = Math.max(next.y, bounds.y);
+    next.height = bottom - next.y;
+    if (next.height < MIN_ROOM_SIZE) {
+      next.height = Math.min(MIN_ROOM_SIZE, bounds.height);
+      next.y = bottom - next.height;
+    }
+  } else {
+    next.height = Math.min(next.height, bounds.height);
+    next.y = Math.min(Math.max(next.y, bounds.y), boundsBottom - next.height);
+  }
+
+  return constrainRect(next);
 }
 
 function rectsOverlap(first: PlanRect, second: PlanRect) {
@@ -1423,7 +1543,14 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
   ) {
     updateState((state) => {
       const previousPlan = activePlan(state);
-      const nextPlan = normalisePlan(updater(clonePlan(previousPlan), state));
+      const scenarioWallIds =
+        state.activeMode === 'scenario'
+          ? (state.lockedBaseline?.plan.walls.map((wall) => wall.id) ?? [])
+          : [];
+      const nextPlan = normalisePlan(
+        updater(clonePlan(previousPlan), state),
+        scenarioWallIds
+      );
       const nextState = { ...state, saveState: 'saving' as const };
 
       if (state.activeMode === 'scenario') {
@@ -2003,13 +2130,14 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
               room.id === roomId
                 ? reshapeRoom(
                     room,
-                    clampRectToBounds(
+                    clampResizedRectToBounds(
                       resizeRect(
                         room,
                         handle,
                         snapValue(x, state.snapToGrid),
                         snapValue(y, state.snapToGrid)
                       ),
+                      handle,
                       bounds
                     )
                   )
@@ -2186,6 +2314,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
       mutatePlan(
         (plan, state) => {
           if (!canEditWalls(state)) return plan;
+          if (state.activeMode === 'scenario') return plan;
 
           return {
             ...plan,
@@ -2307,11 +2436,15 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
                 ? reshapeRoom(
                     room,
                     clampProposedRect(
-                      resizeRect(
-                        room,
+                      clampResizedRectToBounds(
+                        resizeRect(
+                          room,
+                          handle,
+                          snapValue(x, state.snapToGrid),
+                          snapValue(y, state.snapToGrid)
+                        ),
                         handle,
-                        snapValue(x, state.snapToGrid),
-                        snapValue(y, state.snapToGrid)
+                        bounds
                       ),
                       room.id,
                       plan.proposedRooms,
@@ -2421,11 +2554,26 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
       mutatePlan(
         (plan, state) => {
           if (state.activeMode !== 'scenario') return plan;
+          const removedWallIds = new Set(
+            plan.walls
+              .filter(
+                (wall) =>
+                  wall.kind === 'proposed' && wall.roomIds.includes(roomId)
+              )
+              .map((wall) => wall.id)
+          );
 
           return {
             ...plan,
             proposedRooms: plan.proposedRooms.filter(
               (room) => room.id !== roomId
+            ),
+            walls: plan.walls.filter(
+              (wall) =>
+                wall.kind !== 'proposed' || !wall.roomIds.includes(roomId)
+            ),
+            openings: plan.openings.filter(
+              (opening) => !removedWallIds.has(opening.wallId)
             )
           };
         },
@@ -2437,17 +2585,226 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         }
       );
     },
-    addOpening(wallId: string, offset?: number) {
+    addScenarioWall() {
+      const wallId = makeId('wall');
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+          const bounds = state.lockedBaseline?.bounds;
+          if (!bounds) return plan;
+
+          const length = Math.min(GRID_SIZE * 10, bounds.width);
+          const x1 = snapValue(bounds.x + (bounds.width - length) / 2);
+          const y = snapValue(bounds.y + bounds.height / 2);
+          const wall: Wall = {
+            id: wallId,
+            kind: 'proposed',
+            roomIds: [],
+            x1,
+            y1: y,
+            x2: x1 + length,
+            y2: y,
+            structural: false,
+            removed: false
+          };
+
+          return {
+            ...plan,
+            walls: [...plan.walls, wall]
+          };
+        },
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: wallId
+        }
+      );
+    },
+    moveScenarioWall(
+      wallId: string,
+      x: number,
+      y: number,
+      options: { history?: boolean } = {}
+    ) {
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+          const wall = plan.walls.find(
+            (candidate) =>
+              candidate.id === wallId &&
+              candidate.kind === 'proposed' &&
+              !candidate.side
+          );
+          if (!wall) return plan;
+
+          const dx = snapValue(x, state.snapToGrid) - wall.x1;
+          const dy = snapValue(y, state.snapToGrid) - wall.y1;
+
+          return {
+            ...plan,
+            walls: plan.walls.map((candidate) =>
+              candidate.id === wallId
+                ? {
+                    ...candidate,
+                    x1: candidate.x1 + dx,
+                    y1: candidate.y1 + dy,
+                    x2: candidate.x2 + dx,
+                    y2: candidate.y2 + dy
+                  }
+                : candidate
+            )
+          };
+        },
+        {
+          history: options.history,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: wallId
+        }
+      );
+    },
+    updateScenarioWall(
+      wallId: string,
+      patch: Pick<Partial<Wall>, 'x1' | 'y1' | 'x2' | 'y2'>
+    ) {
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+          const bounds = state.lockedBaseline?.bounds;
+          if (!bounds) return plan;
+
+          const clampPoint = (point: PlanPoint) => ({
+            x: Math.min(Math.max(point.x, bounds.x), bounds.x + bounds.width),
+            y: Math.min(Math.max(point.y, bounds.y), bounds.y + bounds.height)
+          });
+
+          return {
+            ...plan,
+            walls: plan.walls.map((wall) => {
+              if (wall.id !== wallId || wall.kind !== 'proposed') return wall;
+              if (wall.side) return wall;
+              const start = clampPoint({
+                x: snapValue(patch.x1 ?? wall.x1, state.snapToGrid),
+                y: snapValue(patch.y1 ?? wall.y1, state.snapToGrid)
+              });
+              const end = clampPoint({
+                x: snapValue(patch.x2 ?? wall.x2, state.snapToGrid),
+                y: snapValue(patch.y2 ?? wall.y2, state.snapToGrid)
+              });
+
+              return {
+                ...wall,
+                x1: start.x,
+                y1: start.y,
+                x2: end.x,
+                y2: end.y
+              };
+            })
+          };
+        },
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: wallId
+        }
+      );
+    },
+    addOpeningToProposedRoomSide(
+      roomId: string,
+      side: WallSide,
+      kind: OpeningKind = 'door'
+    ) {
+      const openingId = makeId('opening');
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+          const room = plan.proposedRooms.find(
+            (candidate) => candidate.id === roomId
+          );
+          if (!room) return plan;
+
+          const wallId = proposedRoomSideWallId(roomId, side);
+          const existingWall = plan.walls.find((wall) => wall.id === wallId);
+          const geometry = wallGeometryForRoomSide(room, side);
+          const wall: Wall =
+            existingWall ??
+            ({
+              id: wallId,
+              kind: 'proposed',
+              roomIds: [roomId],
+              side,
+              ...geometry,
+              structural: false,
+              removed: false
+            } satisfies Wall);
+          const width = Math.min(GRID_SIZE * 2, wallLength(wall));
+          const opening: Opening = {
+            id: openingId,
+            wallId,
+            kind,
+            offset: Math.max(0, wallLength(wall) / 2 - width / 2),
+            width
+          };
+
+          return {
+            ...plan,
+            walls: existingWall ? plan.walls : [...plan.walls, wall],
+            openings: [...plan.openings, opening]
+          };
+        },
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: roomId,
+          selectedWallId: null
+        }
+      );
+    },
+    deleteScenarioWall(wallId: string) {
+      mutatePlan(
+        (plan, state) => {
+          if (state.activeMode !== 'scenario') return plan;
+          const wall = plan.walls.find(
+            (candidate) =>
+              candidate.id === wallId && candidate.kind === 'proposed'
+          );
+          if (!wall) return plan;
+
+          return {
+            ...plan,
+            walls: plan.walls.filter((candidate) => candidate.id !== wallId),
+            openings: plan.openings.filter(
+              (opening) => opening.wallId !== wallId
+            )
+          };
+        },
+        {
+          history: true,
+          selectedRoomId: null,
+          selectedProposedRoomId: null,
+          selectedWallId: null
+        }
+      );
+    },
+    addOpening(wallId: string, offset?: number, kind: OpeningKind = 'door') {
       mutatePlan(
         (plan, state) => {
           if (!canEditWalls(state)) return plan;
-          const wall = plan.walls.find((candidate) => candidate.id === wallId);
+          const wall =
+            plan.walls.find((candidate) => candidate.id === wallId) ??
+            (state.activeMode === 'scenario'
+              ? state.lockedBaseline?.plan.walls.find(
+                  (candidate) => candidate.id === wallId
+                )
+              : undefined);
           if (!wall || wall.removed) return plan;
 
           const opening: Opening = {
             id: makeId('opening'),
             wallId,
-            kind: 'door',
+            kind,
             offset: 0,
             width: GRID_SIZE * 2
           };
@@ -2471,8 +2828,20 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
     },
     updateOpening(
       openingId: string,
-      patch: Pick<Partial<Opening>, 'offset' | 'width'>
+      patch: Pick<Partial<Opening>, 'kind' | 'offset' | 'width'>
     ) {
+      const currentState = get(store);
+      const openingWallId = currentState.plan.openings.find(
+        (opening) => opening.id === openingId
+      )?.wallId;
+      const selectedSideRoomId =
+        currentState.plan.walls.find(
+          (wall) =>
+            wall.kind === 'proposed' &&
+            Boolean(wall.side) &&
+            wall.id === openingWallId
+        )?.roomIds[0] ?? null;
+
       mutatePlan(
         (plan, state) => {
           if (!canEditWalls(state)) return plan;
@@ -2482,9 +2851,13 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
           );
           if (!opening) return plan;
 
-          const wall = plan.walls.find(
-            (candidate) => candidate.id === opening.wallId
-          );
+          const wall =
+            plan.walls.find((candidate) => candidate.id === opening.wallId) ??
+            (state.activeMode === 'scenario'
+              ? state.lockedBaseline?.plan.walls.find(
+                  (candidate) => candidate.id === opening.wallId
+                )
+              : undefined);
           if (!wall || wall.removed) return plan;
 
           const nextOpening = {
@@ -2507,7 +2880,10 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         {
           history: true,
           selectedRoomId: null,
-          selectedProposedRoomId: null
+          selectedProposedRoomId: selectedSideRoomId,
+          selectedWallId: selectedSideRoomId
+            ? null
+            : currentState.selectedWallId
         }
       );
     },
@@ -2543,7 +2919,11 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         const previous = activePast(state).at(-1);
         if (!previous) return state;
 
-        const plan = normalisePlan(previous);
+        const scenarioWallIds =
+          state.activeMode === 'scenario'
+            ? (state.lockedBaseline?.plan.walls.map((wall) => wall.id) ?? [])
+            : [];
+        const plan = normalisePlan(previous, scenarioWallIds);
         const currentPlan = activePlan(state);
         const nextState = {
           ...state,
@@ -2582,7 +2962,11 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
         const next = activeFuture(state)[0];
         if (!next) return state;
 
-        const plan = normalisePlan(next);
+        const scenarioWallIds =
+          state.activeMode === 'scenario'
+            ? (state.lockedBaseline?.plan.walls.map((wall) => wall.id) ?? [])
+            : [];
+        const plan = normalisePlan(next, scenarioWallIds);
         const currentPlan = activePlan(state);
         const nextState = {
           ...state,
@@ -2660,6 +3044,13 @@ export const selectedProposedRoom = derived(editor, ($editor) =>
   )
 );
 
-export const selectedWall = derived(editor, ($editor) =>
-  $editor.plan.walls.find((wall) => wall.id === $editor.selectedWallId)
+export const selectedWall = derived(
+  editor,
+  ($editor) =>
+    $editor.plan.walls.find((wall) => wall.id === $editor.selectedWallId) ??
+    ($editor.activeMode === 'scenario'
+      ? $editor.lockedBaseline?.plan.walls.find(
+          (wall) => wall.id === $editor.selectedWallId
+        )
+      : undefined)
 );
