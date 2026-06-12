@@ -333,6 +333,317 @@ describe('scenario bounds and history', () => {
     );
   });
 
+  it('snaps irregular proposed rooms by their polygon edges', () => {
+    const baselinePlan: PlanDocument = {
+      id: 'existing-v1-plan',
+      rooms: [
+        {
+          id: 'whole-area',
+          name: 'Whole area',
+          type: 'generic',
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 500
+        }
+      ],
+      proposedRooms: [],
+      walls: [],
+      openings: [],
+      objects: []
+    };
+    const scenarioPlan: PlanDocument = {
+      id: 'renovation-plan',
+      rooms: [],
+      proposedRooms: [
+        {
+          id: 'left-room',
+          name: 'Left irregular',
+          type: 'generic',
+          x: 48,
+          y: 48,
+          width: 360,
+          height: 336,
+          shape: [
+            { x: 48, y: 48 },
+            { x: 408, y: 48 },
+            { x: 408, y: 240 },
+            { x: 312, y: 240 },
+            { x: 312, y: 384 },
+            { x: 48, y: 384 }
+          ]
+        },
+        {
+          id: 'right-room',
+          name: 'Right irregular',
+          type: 'generic',
+          x: 456,
+          y: 48,
+          width: 360,
+          height: 336,
+          shape: [
+            { x: 552, y: 48 },
+            { x: 816, y: 48 },
+            { x: 816, y: 384 },
+            { x: 456, y: 384 },
+            { x: 456, y: 240 },
+            { x: 552, y: 240 }
+          ]
+        }
+      ],
+      walls: [],
+      openings: [],
+      objects: []
+    };
+    const store = createEditorStore({
+      storage: new MemoryStorage(
+        JSON.stringify({
+          version: 1,
+          draftProjectName: 'Irregular snap',
+          baselinePlan,
+          draftPlan: null,
+          lockedBaseline: {
+            id: 'baseline-1',
+            name: 'Irregular snap',
+            version: 1,
+            locked: true,
+            createdAt: '2026-06-08T00:00:00.000Z',
+            bounds: { x: 0, y: 0, width: 800, height: 500 },
+            plan: baselinePlan
+          },
+          scenarioPlan,
+          showReferenceBackground: true,
+          baselines: [],
+          activeBaselineId: 'baseline-1',
+          activeScenarioId: 'scenario-1',
+          activeMode: 'scenario'
+        })
+      ),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.moveProposedRoom('right-room', 312, 48, { history: true });
+    const rightRoom = get(store).plan.proposedRooms.find(
+      (room) => room.id === 'right-room'
+    );
+
+    expect(rightRoom?.x).toBe(312);
+    expect(rightRoom?.shape?.[0].x).toBe(408);
+    expect(rightRoom?.shape?.[4].x).toBe(312);
+  });
+
+  it('snaps irregular proposed rooms when the target is at the top-left footprint edge', () => {
+    const baselinePlan: PlanDocument = {
+      id: 'existing-v1-plan',
+      rooms: [
+        {
+          id: 'whole-area',
+          name: 'Whole area',
+          type: 'generic',
+          x: 0,
+          y: 0,
+          width: 800,
+          height: 500
+        }
+      ],
+      proposedRooms: [],
+      walls: [],
+      openings: [],
+      objects: []
+    };
+    const scenarioPlan: PlanDocument = {
+      id: 'renovation-plan',
+      rooms: [],
+      proposedRooms: [
+        {
+          id: 'left-room',
+          name: 'Left irregular',
+          type: 'generic',
+          x: 0,
+          y: 0,
+          width: 360,
+          height: 336,
+          shape: [
+            { x: 0, y: 0 },
+            { x: 360, y: 0 },
+            { x: 360, y: 192 },
+            { x: 264, y: 192 },
+            { x: 264, y: 336 },
+            { x: 0, y: 336 }
+          ]
+        },
+        {
+          id: 'right-room',
+          name: 'Right irregular',
+          type: 'generic',
+          x: 408,
+          y: 0,
+          width: 360,
+          height: 336,
+          shape: [
+            { x: 504, y: 0 },
+            { x: 768, y: 0 },
+            { x: 768, y: 336 },
+            { x: 408, y: 336 },
+            { x: 408, y: 192 },
+            { x: 504, y: 192 }
+          ]
+        }
+      ],
+      walls: [],
+      openings: [],
+      objects: []
+    };
+    const store = createEditorStore({
+      storage: new MemoryStorage(
+        JSON.stringify({
+          version: 1,
+          draftProjectName: 'Top-left irregular snap',
+          baselinePlan,
+          draftPlan: null,
+          lockedBaseline: {
+            id: 'baseline-1',
+            name: 'Top-left irregular snap',
+            version: 1,
+            locked: true,
+            createdAt: '2026-06-08T00:00:00.000Z',
+            bounds: { x: 0, y: 0, width: 800, height: 500 },
+            plan: baselinePlan
+          },
+          scenarioPlan,
+          showReferenceBackground: true,
+          baselines: [],
+          activeBaselineId: 'baseline-1',
+          activeScenarioId: 'scenario-1',
+          activeMode: 'scenario'
+        })
+      ),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.moveProposedRoom('right-room', 264, 0, { history: true });
+    const rightRoom = get(store).plan.proposedRooms.find(
+      (room) => room.id === 'right-room'
+    );
+
+    expect(rightRoom?.x).toBe(264);
+    expect(rightRoom?.y).toBe(0);
+    expect(rightRoom?.shape?.[0]).toEqual({ x: 360, y: 0 });
+    expect(rightRoom?.shape?.[4]).toEqual({ x: 264, y: 192 });
+
+    store.moveProposedRoom('right-room', 408, 0);
+    store.moveProposedRoom('left-room', 48, 0, { history: true });
+    const leftRoom = get(store).plan.proposedRooms.find(
+      (room) => room.id === 'left-room'
+    );
+    const movedRightRoom = get(store).plan.proposedRooms.find(
+      (room) => room.id === 'right-room'
+    );
+
+    expect(leftRoom?.x).toBe(48);
+    expect(leftRoom?.y).toBe(0);
+    expect(movedRightRoom?.x).toBe(408);
+  });
+
+  it('prefers facing irregular edges over coincident top-corner points', () => {
+    const baselinePlan: PlanDocument = {
+      id: 'existing-v1-plan',
+      rooms: [
+        {
+          id: 'whole-area',
+          name: 'Whole area',
+          type: 'generic',
+          x: 0,
+          y: 0,
+          width: 900,
+          height: 500
+        }
+      ],
+      proposedRooms: [],
+      walls: [],
+      openings: [],
+      objects: []
+    };
+    const scenarioPlan: PlanDocument = {
+      id: 'renovation-plan',
+      rooms: [],
+      proposedRooms: [
+        {
+          id: 'left-room',
+          name: 'Left irregular',
+          type: 'generic',
+          x: 0,
+          y: 0,
+          width: 420,
+          height: 360,
+          shape: [
+            { x: 0, y: 0 },
+            { x: 324, y: 0 },
+            { x: 324, y: 144 },
+            { x: 420, y: 144 },
+            { x: 420, y: 360 },
+            { x: 0, y: 360 }
+          ]
+        },
+        {
+          id: 'right-room',
+          name: 'Right irregular',
+          type: 'generic',
+          x: 420,
+          y: 0,
+          width: 420,
+          height: 360,
+          shape: [
+            { x: 420, y: 0 },
+            { x: 840, y: 0 },
+            { x: 840, y: 360 },
+            { x: 516, y: 360 },
+            { x: 516, y: 144 },
+            { x: 420, y: 144 }
+          ]
+        }
+      ],
+      walls: [],
+      openings: [],
+      objects: []
+    };
+    const store = createEditorStore({
+      storage: new MemoryStorage(
+        JSON.stringify({
+          version: 1,
+          draftProjectName: 'Top-corner irregular snap',
+          baselinePlan,
+          draftPlan: null,
+          lockedBaseline: {
+            id: 'baseline-1',
+            name: 'Top-corner irregular snap',
+            version: 1,
+            locked: true,
+            createdAt: '2026-06-08T00:00:00.000Z',
+            bounds: { x: 0, y: 0, width: 900, height: 500 },
+            plan: baselinePlan
+          },
+          scenarioPlan,
+          showReferenceBackground: true,
+          baselines: [],
+          activeBaselineId: 'baseline-1',
+          activeScenarioId: 'scenario-1',
+          activeMode: 'scenario'
+        })
+      ),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.moveProposedRoom('right-room', 324, 0, { history: true });
+    const rightRoom = get(store).plan.proposedRooms.find(
+      (room) => room.id === 'right-room'
+    );
+
+    expect(rightRoom?.x).toBe(324);
+    expect(rightRoom?.shape?.[0]).toEqual({ x: 324, y: 0 });
+    expect(rightRoom?.shape?.[4]).toEqual({ x: 420, y: 144 });
+  });
+
   it('clamps scenario moves and resizes to the locked baseline bounding box', () => {
     const store = createEditorStore({
       storage: new MemoryStorage(JSON.stringify(samplePlan())),

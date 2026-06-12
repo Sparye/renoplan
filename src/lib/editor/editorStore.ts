@@ -286,14 +286,25 @@ function reshapeRoom<T extends Room | ProposedRoom>(
   room: T,
   rect: PlanRect
 ): T {
-  if (!room.shape || room.shape.length < 3) return { ...room, ...rect };
+  if (!room.shape || room.shape.length < 3) {
+    return {
+      ...room,
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height
+    };
+  }
 
   const widthScale = room.width === 0 ? 1 : rect.width / room.width;
   const heightScale = room.height === 0 ? 1 : rect.height / room.height;
 
   return {
     ...room,
-    ...rect,
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
     shape: room.shape.map((point) => ({
       x: rect.x + (point.x - room.x) * widthScale,
       y: rect.y + (point.y - room.y) * heightScale
@@ -997,7 +1008,12 @@ function constrainRect(rect: PlanRect): PlanRect {
   };
 }
 
-function clampRectToBounds(rect: PlanRect, bounds: PlanBounds | null) {
+type ShapedRect = PlanRect & { shape?: PlanPoint[] };
+
+function clampRectToBounds<T extends PlanRect>(
+  rect: T,
+  bounds: PlanBounds | null
+): T {
   if (!bounds) return rect;
 
   const width = Math.min(rect.width, bounds.width);
@@ -1005,11 +1021,21 @@ function clampRectToBounds(rect: PlanRect, bounds: PlanBounds | null) {
   const maxX = bounds.x + bounds.width - width;
   const maxY = bounds.y + bounds.height - height;
 
+  const x = Math.min(Math.max(rect.x, bounds.x), maxX);
+  const y = Math.min(Math.max(rect.y, bounds.y), maxY);
+  const dx = x - rect.x;
+  const dy = y - rect.y;
+
   return {
-    x: Math.min(Math.max(rect.x, bounds.x), maxX),
-    y: Math.min(Math.max(rect.y, bounds.y), maxY),
+    ...rect,
+    x,
+    y,
     width,
-    height
+    height,
+    shape: (rect as ShapedRect).shape?.map((point) => ({
+      x: point.x + dx,
+      y: point.y + dy
+    }))
   };
 }
 
@@ -1022,8 +1048,69 @@ function rectsOverlap(first: PlanRect, second: PlanRect) {
   );
 }
 
+function pointInPolygon(point: PlanPoint, polygon: PlanPoint[]) {
+  let inside = false;
+
+  for (
+    let index = 0, previousIndex = polygon.length - 1;
+    index < polygon.length;
+    previousIndex = index, index += 1
+  ) {
+    const current = polygon[index];
+    const previous = polygon[previousIndex];
+    const intersects =
+      current.y > point.y !== previous.y > point.y &&
+      point.x <
+        ((previous.x - current.x) * (point.y - current.y)) /
+          (previous.y - current.y) +
+          current.x;
+
+    if (intersects) inside = !inside;
+  }
+
+  return inside;
+}
+
+function polygonsOverlap(first: PlanPoint[], second: PlanPoint[]) {
+  const xs = [...new Set([...first, ...second].map((point) => point.x))].sort(
+    (a, b) => a - b
+  );
+  const ys = [...new Set([...first, ...second].map((point) => point.y))].sort(
+    (a, b) => a - b
+  );
+
+  for (let xIndex = 0; xIndex < xs.length - 1; xIndex += 1) {
+    for (let yIndex = 0; yIndex < ys.length - 1; yIndex += 1) {
+      if (
+        same(xs[xIndex], xs[xIndex + 1]) ||
+        same(ys[yIndex], ys[yIndex + 1])
+      ) {
+        continue;
+      }
+
+      const midpoint = {
+        x: (xs[xIndex] + xs[xIndex + 1]) / 2,
+        y: (ys[yIndex] + ys[yIndex + 1]) / 2
+      };
+
+      if (pointInPolygon(midpoint, first) && pointInPolygon(midpoint, second)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function roomsOverlap(first: ShapedRect, second: ShapedRect) {
+  if (!rectsOverlap(first, second)) return false;
+  if (!first.shape && !second.shape) return true;
+
+  return polygonsOverlap(roomShape(first), roomShape(second));
+}
+
 function snapRectToRoomEdges(
-  rect: PlanRect,
+  rect: ShapedRect,
   roomId: string,
   rooms: ProposedRoom[],
   enabled: boolean
@@ -1031,51 +1118,33 @@ function snapRectToRoomEdges(
   if (!enabled) return rect;
 
   const threshold = GRID_SIZE / 2;
+  const movingRoom = rooms.find((room) => room.id === roomId);
+  if (!movingRoom) return rect;
   const otherRooms = rooms.filter((room) => room.id !== roomId);
   let nextRect = { ...rect };
 
   for (const room of otherRooms) {
-    const horizontalSnaps = [
-      {
-        distance: Math.abs(nextRect.x - room.x),
-        x: room.x
-      },
-      {
-        distance: Math.abs(nextRect.x + nextRect.width - room.x),
-        x: room.x - nextRect.width
-      },
-      {
-        distance: Math.abs(nextRect.x - (room.x + room.width)),
-        x: room.x + room.width
-      },
-      {
-        distance: Math.abs(nextRect.x + nextRect.width - (room.x + room.width)),
-        x: room.x + room.width - nextRect.width
-      }
-    ]
+    const movingPoints = roomShape(
+      translateRoom(movingRoom, nextRect.x, nextRect.y)
+    );
+    const roomPoints = roomShape(room);
+    const horizontalSnaps = movingPoints
+      .flatMap((movingPoint) =>
+        roomPoints.map((roomPoint) => ({
+          distance: Math.abs(movingPoint.x - roomPoint.x),
+          x: nextRect.x + roomPoint.x - movingPoint.x
+        }))
+      )
       .filter((snap) => snap.distance <= threshold)
       .sort((first, second) => first.distance - second.distance);
 
-    const verticalSnaps = [
-      {
-        distance: Math.abs(nextRect.y - room.y),
-        y: room.y
-      },
-      {
-        distance: Math.abs(nextRect.y + nextRect.height - room.y),
-        y: room.y - nextRect.height
-      },
-      {
-        distance: Math.abs(nextRect.y - (room.y + room.height)),
-        y: room.y + room.height
-      },
-      {
-        distance: Math.abs(
-          nextRect.y + nextRect.height - (room.y + room.height)
-        ),
-        y: room.y + room.height - nextRect.height
-      }
-    ]
+    const verticalSnaps = movingPoints
+      .flatMap((movingPoint) =>
+        roomPoints.map((roomPoint) => ({
+          distance: Math.abs(movingPoint.y - roomPoint.y),
+          y: nextRect.y + roomPoint.y - movingPoint.y
+        }))
+      )
       .filter((snap) => snap.distance <= threshold)
       .sort((first, second) => first.distance - second.distance);
 
@@ -1090,7 +1159,7 @@ function snapRectToRoomEdges(
 }
 
 function clampProposedRect(
-  rect: PlanRect,
+  rect: ShapedRect,
   roomId: string,
   rooms: ProposedRoom[],
   bounds: PlanBounds | null
@@ -1100,7 +1169,7 @@ function clampProposedRect(
 
   for (let attempt = 0; attempt < otherRooms.length; attempt += 1) {
     const overlapRoom = otherRooms.find((room) =>
-      rectsOverlap(candidate, room)
+      roomsOverlap(candidate, room)
     );
     if (!overlapRoom) return candidate;
 
@@ -1111,7 +1180,7 @@ function clampProposedRect(
       { ...candidate, y: overlapRoom.y + overlapRoom.height }
     ]
       .map((next) => clampRectToBounds(next, bounds))
-      .filter((next) => otherRooms.every((room) => !rectsOverlap(next, room)))
+      .filter((next) => otherRooms.every((room) => !roomsOverlap(next, room)))
       .sort(
         (first, second) =>
           (first.x - rect.x) ** 2 +
@@ -1973,7 +2042,7 @@ export function createEditorStore(options: CreateEditorStoreOptions = {}) {
                 state.snapToGrid
               );
               const nextRect = clampProposedRect(
-                snappedRect,
+                translateRoom(room, snappedRect.x, snappedRect.y),
                 room.id,
                 plan.proposedRooms,
                 bounds
