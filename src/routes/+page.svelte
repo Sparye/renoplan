@@ -29,6 +29,7 @@
     PlanRect,
     ProposedRoom,
     Room,
+    RoomInventoryItem,
     SetupRoomKind,
     Wall
   } from '$lib/domain/types';
@@ -65,16 +66,31 @@
     y: number;
     offset: number;
   } | null = null;
+  let setupUsesWholeArea = false;
 
   let counts = Object.fromEntries(
     roomSetupOptions.map((option) => [option.kind, 0])
   ) as Record<SetupRoomKind, number>;
-  let wholeAreaWidth = '6.00';
-  let wholeAreaLength = '8.00';
+  let wholeAreaWidth = '';
+  let wholeAreaLength = '';
   let proposedMeasurementRoomId: string | null = null;
   let proposedMeasurementEditing: 'width' | 'height' | null = null;
   let proposedWidthDraft = '';
   let proposedDepthDraft = '';
+  let roomMeasurementRoomId: string | null = null;
+  let roomMeasurementEditing: 'width' | 'height' | null = null;
+  let roomWidthDraft = '';
+  let roomDepthDraft = '';
+  let inventoryMeasurementEditing: {
+    roomId: string;
+    field: 'width' | 'height';
+  } | null = null;
+  let inventoryMeasurementDraft = '';
+  let openingMeasurementEditing: {
+    openingId: string;
+    field: 'offset' | 'width';
+  } | null = null;
+  let openingMeasurementDraft = '';
 
   const roomFillClasses: Record<Room['type'], string> = {
     bedroom: 'fill-[#dfeadf]',
@@ -143,6 +159,10 @@
     Number(wholeAreaWidth),
     Number(wholeAreaLength)
   );
+  $: hasWholeArea = isValidWholeArea(
+    Number(wholeAreaWidth),
+    Number(wholeAreaLength)
+  );
   $: if ($selectedProposedRoom?.id !== proposedMeasurementRoomId) {
     proposedMeasurementRoomId = $selectedProposedRoom?.id ?? null;
     proposedMeasurementEditing = null;
@@ -161,10 +181,28 @@
       2
     );
   }
+  $: if ($selectedRoom?.id !== roomMeasurementRoomId) {
+    roomMeasurementRoomId = $selectedRoom?.id ?? null;
+    roomMeasurementEditing = null;
+    roomWidthDraft = $selectedRoom
+      ? pixelsToMetres($selectedRoom.width).toFixed(2)
+      : '';
+    roomDepthDraft = $selectedRoom
+      ? pixelsToMetres($selectedRoom.height).toFixed(2)
+      : '';
+  }
+  $: if ($selectedRoom && roomMeasurementEditing !== 'width') {
+    roomWidthDraft = pixelsToMetres($selectedRoom.width).toFixed(2);
+  }
+  $: if ($selectedRoom && roomMeasurementEditing !== 'height') {
+    roomDepthDraft = pixelsToMetres($selectedRoom.height).toFixed(2);
+  }
   $: roomMergeCandidates =
     $selectedRoom && canEditGeometry
       ? $editor.plan.rooms.filter(
           (room) =>
+            $selectedRoom.id !== 'whole-area' &&
+            room.id !== 'whole-area' &&
             room.id !== $selectedRoom?.id &&
             !room.shape &&
             !$selectedRoom?.shape &&
@@ -194,26 +232,45 @@
     };
   }
 
-  function submitCounts() {
-    editor.createInventory(counts);
+  function isValidWholeArea(width: number, length: number) {
+    return (
+      Number.isFinite(width) &&
+      Number.isFinite(length) &&
+      width > 0 &&
+      length > 0
+    );
   }
 
-  function submitWholeArea() {
+  function continueBaselineSetup() {
     const width = Number(wholeAreaWidth);
     const length = Number(wholeAreaLength);
-    if (
-      !Number.isFinite(width) ||
-      !Number.isFinite(length) ||
-      width <= 0 ||
-      length <= 0
-    ) {
+
+    if (totalRooms === 0 && !isValidWholeArea(width, length)) {
       return;
     }
 
-    editor.startEditorFromWholeArea(
-      metresToPixels(width),
-      metresToPixels(length)
-    );
+    if (totalRooms === 0) {
+      editor.startEditorFromWholeArea(
+        metresToPixels(width),
+        metresToPixels(length)
+      );
+      scheduleSaved();
+      return;
+    }
+
+    setupUsesWholeArea = isValidWholeArea(width, length);
+    editor.createInventory(counts);
+  }
+
+  function startEditorFromMeasurements() {
+    if (setupUsesWholeArea) {
+      editor.startEditorFromInventoryWithinWholeArea(
+        metresToPixels(Number(wholeAreaWidth)),
+        metresToPixels(Number(wholeAreaLength))
+      );
+    } else {
+      editor.startEditorFromInventory();
+    }
     scheduleSaved();
   }
 
@@ -224,8 +281,10 @@
   }
 
   function previewWholeArea(width: number, length: number) {
-    const safeWidth = Number.isFinite(width) && width > 0 ? width : 1;
-    const safeLength = Number.isFinite(length) && length > 0 ? length : 1;
+    const labelWidth = Number.isFinite(width) && width > 0 ? width : 0;
+    const labelLength = Number.isFinite(length) && length > 0 ? length : 0;
+    const safeWidth = labelWidth > 0 ? labelWidth : 1;
+    const safeLength = labelLength > 0 ? labelLength : 1;
     const previewWidth = 260;
     const previewHeight = 190;
     const maxRectWidth = 190;
@@ -244,9 +303,9 @@
       height: rectHeight,
       canvasWidth: previewWidth,
       canvasHeight: previewHeight,
-      labelWidth: safeWidth,
-      labelLength: safeLength,
-      area: safeWidth * safeLength
+      labelWidth,
+      labelLength,
+      area: labelWidth * labelLength
     };
   }
 
@@ -262,6 +321,90 @@
       [field]: metresToPixels(metres),
       measured: true
     });
+  }
+
+  function inventoryMeasurementValue(
+    room: RoomInventoryItem,
+    field: 'width' | 'height'
+  ) {
+    if (
+      inventoryMeasurementEditing?.roomId === room.id &&
+      inventoryMeasurementEditing.field === field
+    ) {
+      return inventoryMeasurementDraft;
+    }
+
+    return pixelsToMetres(room[field]).toFixed(2);
+  }
+
+  function focusInventoryMeasurement(
+    event: FocusEvent,
+    room: RoomInventoryItem,
+    field: 'width' | 'height'
+  ) {
+    inventoryMeasurementEditing = { roomId: room.id, field };
+    inventoryMeasurementDraft = pixelsToMetres(room[field]).toFixed(2);
+    queueSelectInputValue(event);
+  }
+
+  function updateInventoryMeasurementDraft(
+    roomId: string,
+    field: 'width' | 'height',
+    value: string
+  ) {
+    inventoryMeasurementDraft = value;
+    updateInventoryMetres(roomId, field, value);
+  }
+
+  function openingMeasurementValue(
+    opening: Opening,
+    field: 'offset' | 'width'
+  ) {
+    if (
+      openingMeasurementEditing?.openingId === opening.id &&
+      openingMeasurementEditing.field === field
+    ) {
+      return openingMeasurementDraft;
+    }
+
+    return pixelsToMetres(opening[field]).toFixed(2);
+  }
+
+  function focusOpeningMeasurement(
+    event: FocusEvent,
+    opening: Opening,
+    field: 'offset' | 'width'
+  ) {
+    openingMeasurementEditing = { openingId: opening.id, field };
+    openingMeasurementDraft = pixelsToMetres(opening[field]).toFixed(2);
+    queueSelectInputValue(event);
+  }
+
+  function updateOpeningMeasurementDraft(
+    openingId: string,
+    field: 'offset' | 'width',
+    value: string
+  ) {
+    openingMeasurementDraft = value;
+    const pixels = pixelsFromMetres(value);
+    if (pixels === null) return;
+
+    editor.updateOpening(openingId, { [field]: pixels });
+    scheduleSaved();
+  }
+
+  function selectInputValue(event: Event) {
+    const input = event.currentTarget;
+    if (input instanceof HTMLInputElement) {
+      input.select();
+    }
+  }
+
+  function queueSelectInputValue(event: Event) {
+    const input = event.currentTarget;
+    if (input instanceof HTMLInputElement) {
+      setTimeout(() => input.select(), 0);
+    }
   }
 
   function useSuggestedSize(roomId: string, kind: SetupRoomKind) {
@@ -297,6 +440,17 @@
     if (pixels === null) return;
 
     editor.updateProposedRoom($selectedProposedRoom.id, {
+      [field]: pixels
+    });
+    scheduleSaved();
+  }
+
+  function updateRoomMeasurement(field: 'width' | 'height', value: string) {
+    if (!$selectedRoom) return;
+    const pixels = pixelsFromMetres(value);
+    if (pixels === null) return;
+
+    editor.updateRoom($selectedRoom.id, {
       [field]: pixels
     });
     scheduleSaved();
@@ -855,11 +1009,12 @@
           >
             <div class="grid gap-1">
               <h2 class="m-0 text-[1.1rem] font-bold tracking-normal">
-                Start with the whole area
+                Whole area
               </h2>
               <p class="m-0 text-sm text-[#5f6c7b]">
                 Enter the overall workable area when you know the footprint
-                before the individual room sizes.
+                before the individual room sizes. Leave it at 0 when you only
+                want to start from rooms only.
               </p>
             </div>
             <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -875,6 +1030,8 @@
                     step="0.01"
                     type="number"
                     value={wholeAreaWidth}
+                    onfocus={queueSelectInputValue}
+                    onclick={selectInputValue}
                     oninput={(event) =>
                       (wholeAreaWidth = event.currentTarget.value)}
                   />
@@ -888,6 +1045,8 @@
                     step="0.01"
                     type="number"
                     value={wholeAreaLength}
+                    onfocus={queueSelectInputValue}
+                    onclick={selectInputValue}
                     oninput={(event) =>
                       (wholeAreaLength = event.currentTarget.value)}
                   />
@@ -899,105 +1058,101 @@
                 >
                   Swap width/length
                 </button>
-                <button
-                  class="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-[#0f766e] px-4 text-sm font-bold text-white"
-                  type="button"
-                  onclick={submitWholeArea}
-                >
-                  <Check size={18} />
-                  Create plan
-                </button>
               </div>
 
-              <figure
-                class="m-0 grid justify-items-center gap-2 rounded-md bg-[#f8fafc] p-3"
-                aria-label="Whole area orientation preview"
-              >
-                <svg
-                  class="h-auto w-full max-w-[260px]"
-                  viewBox={`0 0 ${wholeAreaPreview.canvasWidth} ${wholeAreaPreview.canvasHeight}`}
-                  role="img"
-                  aria-label="Width runs left to right. Length runs top to bottom."
+              {#if hasWholeArea}
+                <figure
+                  class="m-0 grid justify-items-center gap-2 rounded-md bg-[#f8fafc] p-3"
+                  aria-label="Whole area orientation preview"
                 >
-                  <defs>
-                    <marker
-                      id="area-preview-arrow"
-                      viewBox="0 0 10 10"
-                      refX="5"
-                      refY="5"
-                      markerWidth="5"
-                      markerHeight="5"
-                      orient="auto-start-reverse"
+                  <svg
+                    class="h-auto w-full max-w-[260px]"
+                    viewBox={`0 0 ${wholeAreaPreview.canvasWidth} ${wholeAreaPreview.canvasHeight}`}
+                    role="img"
+                    aria-label="Width runs left to right. Length runs top to bottom."
+                  >
+                    <defs>
+                      <marker
+                        id="area-preview-arrow"
+                        viewBox="0 0 10 10"
+                        refX="5"
+                        refY="5"
+                        markerWidth="5"
+                        markerHeight="5"
+                        orient="auto-start-reverse"
+                      >
+                        <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e" />
+                      </marker>
+                    </defs>
+                    <rect
+                      x={wholeAreaPreview.x}
+                      y={wholeAreaPreview.y}
+                      width={wholeAreaPreview.width}
+                      height={wholeAreaPreview.height}
+                      fill="#e8ecef"
+                      stroke="#17202a"
+                      stroke-width="2"
+                      rx="3"
+                    />
+                    <line
+                      x1={wholeAreaPreview.x}
+                      y1={wholeAreaPreview.y + wholeAreaPreview.height + 18}
+                      x2={wholeAreaPreview.x + wholeAreaPreview.width}
+                      y2={wholeAreaPreview.y + wholeAreaPreview.height + 18}
+                      stroke="#0f766e"
+                      stroke-width="2"
+                      marker-start="url(#area-preview-arrow)"
+                      marker-end="url(#area-preview-arrow)"
+                    />
+                    <text
+                      class="fill-[#0f766e] text-[12px] font-bold"
+                      x={wholeAreaPreview.x + wholeAreaPreview.width / 2}
+                      y={wholeAreaPreview.y + wholeAreaPreview.height + 38}
+                      text-anchor="middle"
                     >
-                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e" />
-                    </marker>
-                  </defs>
-                  <rect
-                    x={wholeAreaPreview.x}
-                    y={wholeAreaPreview.y}
-                    width={wholeAreaPreview.width}
-                    height={wholeAreaPreview.height}
-                    fill="#e8ecef"
-                    stroke="#17202a"
-                    stroke-width="2"
-                    rx="3"
-                  />
-                  <line
-                    x1={wholeAreaPreview.x}
-                    y1={wholeAreaPreview.y + wholeAreaPreview.height + 18}
-                    x2={wholeAreaPreview.x + wholeAreaPreview.width}
-                    y2={wholeAreaPreview.y + wholeAreaPreview.height + 18}
-                    stroke="#0f766e"
-                    stroke-width="2"
-                    marker-start="url(#area-preview-arrow)"
-                    marker-end="url(#area-preview-arrow)"
-                  />
-                  <text
-                    class="fill-[#0f766e] text-[12px] font-bold"
-                    x={wholeAreaPreview.x + wholeAreaPreview.width / 2}
-                    y={wholeAreaPreview.y + wholeAreaPreview.height + 38}
-                    text-anchor="middle"
+                      Width {wholeAreaPreview.labelWidth.toFixed(2)}m
+                    </text>
+                    <line
+                      x1={wholeAreaPreview.x - 18}
+                      y1={wholeAreaPreview.y}
+                      x2={wholeAreaPreview.x - 18}
+                      y2={wholeAreaPreview.y + wholeAreaPreview.height}
+                      stroke="#0f766e"
+                      stroke-width="2"
+                      marker-start="url(#area-preview-arrow)"
+                      marker-end="url(#area-preview-arrow)"
+                    />
+                    <text
+                      class="fill-[#0f766e] text-[12px] font-bold"
+                      x={wholeAreaPreview.x - 8}
+                      y={wholeAreaPreview.y + wholeAreaPreview.height / 2}
+                      text-anchor="middle"
+                      transform={`rotate(-90 ${wholeAreaPreview.x - 8} ${wholeAreaPreview.y + wholeAreaPreview.height / 2})`}
+                    >
+                      Length {wholeAreaPreview.labelLength.toFixed(2)}m
+                    </text>
+                  </svg>
+                  <figcaption
+                    class="text-center text-xs font-bold text-[#66717e]"
                   >
-                    Width {wholeAreaPreview.labelWidth.toFixed(2)}m
-                  </text>
-                  <line
-                    x1={wholeAreaPreview.x - 18}
-                    y1={wholeAreaPreview.y}
-                    x2={wholeAreaPreview.x - 18}
-                    y2={wholeAreaPreview.y + wholeAreaPreview.height}
-                    stroke="#0f766e"
-                    stroke-width="2"
-                    marker-start="url(#area-preview-arrow)"
-                    marker-end="url(#area-preview-arrow)"
-                  />
-                  <text
-                    class="fill-[#0f766e] text-[12px] font-bold"
-                    x={wholeAreaPreview.x - 36}
-                    y={wholeAreaPreview.y + wholeAreaPreview.height / 2}
-                    text-anchor="middle"
-                    transform={`rotate(-90 ${wholeAreaPreview.x - 36} ${wholeAreaPreview.y + wholeAreaPreview.height / 2})`}
-                  >
-                    Length {wholeAreaPreview.labelLength.toFixed(2)}m
-                  </text>
-                </svg>
-                <figcaption
-                  class="text-center text-xs font-bold text-[#66717e]"
-                >
-                  Preview: width is horizontal, length is vertical · {wholeAreaPreview.area.toFixed(
-                    2
-                  )}m²
-                </figcaption>
-              </figure>
+                    Preview: width is horizontal, length is vertical · {wholeAreaPreview.area.toFixed(
+                      2
+                    )}m²
+                  </figcaption>
+                </figure>
+              {/if}
             </div>
           </div>
 
           <div class="flex items-end justify-between gap-4">
             <div class="grid gap-1">
               <h2 class="m-0 text-[1.1rem] font-bold tracking-normal">
-                Or count each room
+                Room inventory
               </h2>
               <p class="m-0 text-sm text-[#5f6c7b]">
-                Add only rooms present in the current house.
+                Add the rooms present in the current house. When whole-area
+                dimensions are also filled in, the generated plan keeps that
+                footprint and places these rooms inside it.
               </p>
             </div>
             <div class="text-sm font-bold text-[#435061]">
@@ -1049,8 +1204,8 @@
             <button
               class="inline-flex min-h-11 items-center gap-2 rounded-md bg-[#0f766e] px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
               type="button"
-              disabled={totalRooms === 0}
-              onclick={submitCounts}
+              disabled={totalRooms === 0 && !hasWholeArea}
+              onclick={continueBaselineSetup}
             >
               <Check size={18} />
               Continue
@@ -1062,10 +1217,14 @@
           <div class="flex items-end justify-between gap-4">
             <div class="grid gap-1">
               <h2 class="m-0 text-[1.1rem] font-bold tracking-normal">
-                Add measurements
+                {setupUsesWholeArea
+                  ? 'Add measurements inside the whole area'
+                  : 'Add measurements'}
               </h2>
               <p class="m-0 text-sm text-[#5f6c7b]">
-                Use known dimensions, or keep the suggested size for now.
+                {setupUsesWholeArea
+                  ? 'Use known dimensions for each room. The generated plan will keep the overall footprint you entered.'
+                  : 'Use known dimensions, or keep the suggested size for now.'}
               </p>
             </div>
             <div class="text-sm font-bold text-[#435061]">
@@ -1097,9 +1256,15 @@
                     min="0.5"
                     step="0.01"
                     type="number"
-                    value={pixelsToMetres(room.width).toFixed(2)}
+                    value={inventoryMeasurementValue(room, 'width')}
+                    onfocus={(event) =>
+                      focusInventoryMeasurement(event, room, 'width')}
+                    onclick={selectInputValue}
+                    onblur={() => {
+                      inventoryMeasurementEditing = null;
+                    }}
                     oninput={(event) =>
-                      updateInventoryMetres(
+                      updateInventoryMeasurementDraft(
                         room.id,
                         'width',
                         event.currentTarget.value
@@ -1114,9 +1279,15 @@
                     min="0.5"
                     step="0.01"
                     type="number"
-                    value={pixelsToMetres(room.height).toFixed(2)}
+                    value={inventoryMeasurementValue(room, 'height')}
+                    onfocus={(event) =>
+                      focusInventoryMeasurement(event, room, 'height')}
+                    onclick={selectInputValue}
+                    onblur={() => {
+                      inventoryMeasurementEditing = null;
+                    }}
                     oninput={(event) =>
-                      updateInventoryMetres(
+                      updateInventoryMeasurementDraft(
                         room.id,
                         'height',
                         event.currentTarget.value
@@ -1138,7 +1309,10 @@
             <button
               class="inline-flex min-h-11 items-center gap-2 rounded-md border border-[#c8d1dc] bg-white px-4 text-sm font-bold text-[#17202a]"
               type="button"
-              onclick={editor.returnToCounts}
+              onclick={() => {
+                setupUsesWholeArea = false;
+                editor.returnToCounts();
+              }}
             >
               <ArrowLeft size={18} />
               Counts
@@ -1146,10 +1320,7 @@
             <button
               class="inline-flex min-h-11 items-center gap-2 rounded-md bg-[#0f766e] px-4 text-sm font-bold text-white"
               type="button"
-              onclick={() => {
-                editor.startEditorFromInventory();
-                scheduleSaved();
-              }}
+              onclick={startEditorFromMeasurements}
             >
               <Check size={18} />
               Create plan
@@ -1361,6 +1532,73 @@
               </dd>
             </div>
           </dl>
+          {#if canEditGeometry}
+            <div class="grid min-w-0 grid-cols-2 gap-2">
+              <label
+                class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
+              >
+                Width m
+                <input
+                  class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                  inputmode="decimal"
+                  min="0.5"
+                  step="0.01"
+                  type="number"
+                  value={roomWidthDraft}
+                  onfocus={(event) => {
+                    roomMeasurementEditing = 'width';
+                    queueSelectInputValue(event);
+                  }}
+                  onclick={selectInputValue}
+                  onblur={() => {
+                    roomMeasurementEditing = null;
+                  }}
+                  oninput={(event) => {
+                    roomWidthDraft = event.currentTarget.value;
+                    updateRoomMeasurement('width', roomWidthDraft);
+                  }}
+                />
+              </label>
+              <label
+                class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
+              >
+                Depth m
+                <input
+                  class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                  inputmode="decimal"
+                  min="0.5"
+                  step="0.01"
+                  type="number"
+                  value={roomDepthDraft}
+                  onfocus={(event) => {
+                    roomMeasurementEditing = 'height';
+                    queueSelectInputValue(event);
+                  }}
+                  onclick={selectInputValue}
+                  onblur={() => {
+                    roomMeasurementEditing = null;
+                  }}
+                  oninput={(event) => {
+                    roomDepthDraft = event.currentTarget.value;
+                    updateRoomMeasurement('height', roomDepthDraft);
+                  }}
+                />
+              </label>
+            </div>
+            {#if !isScenarioMode && $selectedRoom.id !== 'whole-area'}
+              <button
+                class="inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-[#c8d1dc] bg-[#f8fafc] px-3 text-sm font-bold text-[#17202a]"
+                type="button"
+                onclick={() => {
+                  editor.deleteRoom($selectedRoom.id);
+                  scheduleSaved();
+                }}
+              >
+                <Trash2 size={16} />
+                Remove room
+              </button>
+            {/if}
+          {/if}
           {#if roomMergeCandidates.length > 0}
             <div class="grid gap-2">
               <h3 class="m-0 text-[0.78rem] font-bold text-[#66717e] uppercase">
@@ -1418,9 +1656,11 @@
                 step="0.01"
                 type="number"
                 value={proposedWidthDraft}
-                onfocus={() => {
+                onfocus={(event) => {
                   proposedMeasurementEditing = 'width';
+                  queueSelectInputValue(event);
                 }}
+                onclick={selectInputValue}
                 onblur={() => {
                   proposedMeasurementEditing = null;
                 }}
@@ -1439,9 +1679,11 @@
                 step="0.01"
                 type="number"
                 value={proposedDepthDraft}
-                onfocus={() => {
+                onfocus={(event) => {
                   proposedMeasurementEditing = 'height';
+                  queueSelectInputValue(event);
                 }}
+                onclick={selectInputValue}
                 onblur={() => {
                   proposedMeasurementEditing = null;
                 }}
@@ -1564,15 +1806,19 @@
                         min="0"
                         step="0.25"
                         type="number"
-                        value={pixelsToMetres(opening.offset).toFixed(2)}
-                        oninput={(event) => {
-                          const value = pixelsFromMetres(
-                            event.currentTarget.value
-                          );
-                          if (value === null) return;
-                          editor.updateOpening(opening.id, { offset: value });
-                          scheduleSaved();
+                        value={openingMeasurementValue(opening, 'offset')}
+                        onfocus={(event) =>
+                          focusOpeningMeasurement(event, opening, 'offset')}
+                        onclick={selectInputValue}
+                        onblur={() => {
+                          openingMeasurementEditing = null;
                         }}
+                        oninput={(event) =>
+                          updateOpeningMeasurementDraft(
+                            opening.id,
+                            'offset',
+                            event.currentTarget.value
+                          )}
                       />
                     </label>
                     <label class="grid gap-1 text-xs font-bold text-[#66717e]">
@@ -1583,15 +1829,19 @@
                         min="0.25"
                         step="0.25"
                         type="number"
-                        value={pixelsToMetres(opening.width).toFixed(2)}
-                        oninput={(event) => {
-                          const value = pixelsFromMetres(
-                            event.currentTarget.value
-                          );
-                          if (value === null) return;
-                          editor.updateOpening(opening.id, { width: value });
-                          scheduleSaved();
+                        value={openingMeasurementValue(opening, 'width')}
+                        onfocus={(event) =>
+                          focusOpeningMeasurement(event, opening, 'width')}
+                        onclick={selectInputValue}
+                        onblur={() => {
+                          openingMeasurementEditing = null;
                         }}
+                        oninput={(event) =>
+                          updateOpeningMeasurementDraft(
+                            opening.id,
+                            'width',
+                            event.currentTarget.value
+                          )}
                       />
                     </label>
                   </div>
@@ -1631,7 +1881,7 @@
               Lock baseline
             </button>
           {/if}
-          {#if isScenarioMode}
+          {#if canEditGeometry}
             <div class="relative">
               <button
                 class={`inline-flex min-h-9 items-center gap-2 rounded-md px-3 text-sm font-bold ${
@@ -1662,7 +1912,11 @@
                       type="button"
                       role="menuitem"
                       onclick={() => {
-                        editor.addProposedRoom(option.kind);
+                        if (isScenarioMode) {
+                          editor.addProposedRoom(option.kind);
+                        } else {
+                          editor.addRoom(option.kind);
+                        }
                         addRoomMenuOpen = false;
                         scheduleSaved();
                       }}
@@ -2156,6 +2410,7 @@
                     width="10"
                     height="10"
                     rx="2"
+                    data-testid={`resize-${$selectedRoom.id}-${item.handle}`}
                     vector-effect="non-scaling-stroke"
                     onpointerdown={(event) =>
                       handleResizePointerDown(
@@ -2245,6 +2500,7 @@
                         width="10"
                         height="10"
                         rx="2"
+                        data-testid={`resize-${room.id}-${item.handle}`}
                         vector-effect="non-scaling-stroke"
                         onpointerdown={(event) =>
                           handleResizePointerDown(

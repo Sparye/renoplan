@@ -104,6 +104,93 @@ describe('wall derivation', () => {
     expect(state.plan.walls).toHaveLength(8);
     expect(state.selectedRoomId).toBe('room-a');
   });
+
+  it('adds a baseline room next to the selected room so it can be merged', () => {
+    const store = createEditorStore({
+      storage: new MemoryStorage(JSON.stringify(samplePlan())),
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => 'room-c'
+    });
+
+    store.selectRoom('room-a');
+    store.addRoom('bathroom');
+    let state = get(store);
+
+    expect(state.plan.rooms).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'room-c',
+          name: 'Bathroom',
+          x: 96,
+          y: 0,
+          width: 120,
+          height: 96
+        })
+      ])
+    );
+    expect(state.selectedRoomId).toBe('room-c');
+
+    store.mergeRoom('room-c', 'room-a');
+    state = get(store);
+
+    expect(state.plan.rooms).toHaveLength(2);
+    expect(state.plan.rooms.find((room) => room.id === 'room-c')).toEqual(
+      expect.objectContaining({
+        name: 'Bathroom + Room A',
+        shape: expect.any(Array)
+      })
+    );
+  });
+
+  it('updates baseline room dimensions directly from the inspector', () => {
+    const store = createEditorStore({
+      storage: new MemoryStorage(JSON.stringify(samplePlan())),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.updateRoom('room-a', { width: 288, height: 240 });
+    const state = get(store);
+
+    expect(state.plan.rooms.find((room) => room.id === 'room-a')).toEqual(
+      expect.objectContaining({
+        width: 288,
+        height: 240
+      })
+    );
+    expect(state.selectedRoomId).toBe('room-a');
+    expect(state.plan.walls.length).toBeGreaterThan(0);
+  });
+
+  it('snaps baseline rooms to neighbouring edges while configuring the baseline', () => {
+    const store = createEditorStore({
+      storage: new MemoryStorage(JSON.stringify(samplePlan())),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.moveRoom('room-b', 105, 0, { history: true });
+    const state = get(store);
+
+    expect(state.plan.rooms.find((room) => room.id === 'room-b')?.x).toBe(100);
+  });
+
+  it('deletes baseline rooms while keeping the footprint room intact', () => {
+    const store = createEditorStore({
+      storage: new MemoryStorage(),
+      now: () => '2026-06-08T00:00:00.000Z',
+      createId: () => 'room-1'
+    });
+
+    store.startEditorFromWholeArea(240, 240);
+    store.addRoom('kitchen');
+    store.deleteRoom('room-1');
+    store.deleteRoom('whole-area');
+    const state = get(store);
+
+    expect(state.plan.rooms).toEqual([
+      expect.objectContaining({ id: 'whole-area' })
+    ]);
+    expect(state.selectedRoomId).toBeNull();
+  });
 });
 
 describe('baseline locking', () => {
@@ -130,6 +217,103 @@ describe('baseline locking', () => {
       })
     ]);
     expect(state.baselinePlan.walls).toHaveLength(4);
+  });
+
+  it('can start a draft baseline from whole-area dimensions and measured rooms', () => {
+    const store = createEditorStore({
+      storage: new MemoryStorage(),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.createInventory({
+      bedroom: 1,
+      toilet: 0,
+      bathroom: 0,
+      kitchen: 1,
+      living: 0,
+      dining: 0,
+      laundry: 0,
+      storage: 0,
+      garage: 0,
+      other: 0
+    });
+    store.updateInventoryRoom('bedroom-1', {
+      width: 336,
+      height: 288,
+      measured: true
+    });
+    store.startEditorFromInventoryWithinWholeArea(576, 768);
+    const state = get(store);
+
+    expect(state.setupStep).toBe('editor');
+    expect(state.selectedRoomId).toBe('bedroom-1');
+    expect(state.baselinePlan.rooms).toEqual([
+      expect.objectContaining({
+        id: 'whole-area',
+        name: 'Whole area',
+        x: 48,
+        y: 48,
+        width: 576,
+        height: 768
+      }),
+      expect.objectContaining({
+        id: 'bedroom-1',
+        name: 'Bedroom',
+        x: 72,
+        y: 72,
+        width: 336,
+        height: 288
+      }),
+      expect.objectContaining({
+        id: 'kitchen-1',
+        name: 'Kitchen',
+        x: 432,
+        y: 72,
+        width: 168,
+        height: 144
+      })
+    ]);
+    expect(state.baselinePlan.walls.length).toBeGreaterThan(4);
+  });
+
+  it('keeps baseline rooms inside the configured whole-area footprint', () => {
+    const store = createEditorStore({
+      storage: new MemoryStorage(),
+      now: () => '2026-06-08T00:00:00.000Z'
+    });
+
+    store.createInventory({
+      bedroom: 0,
+      toilet: 0,
+      bathroom: 0,
+      kitchen: 1,
+      living: 0,
+      dining: 0,
+      laundry: 0,
+      storage: 0,
+      garage: 0,
+      other: 0
+    });
+    store.startEditorFromInventoryWithinWholeArea(528, 384);
+    store.moveRoom('kitchen-1', 0, 0, { history: true });
+    let state = get(store);
+
+    expect(state.plan.rooms.find((room) => room.id === 'kitchen-1')).toEqual(
+      expect.objectContaining({
+        x: 48,
+        y: 48
+      })
+    );
+
+    store.moveRoom('kitchen-1', 900, 900, { history: true });
+    state = get(store);
+
+    expect(state.plan.rooms.find((room) => room.id === 'kitchen-1')).toEqual(
+      expect.objectContaining({
+        x: 408,
+        y: 288
+      })
+    );
   });
 
   it('blocks locking an empty baseline', () => {

@@ -23,17 +23,18 @@ test('selects and resizes rooms while configuring an unlocked baseline', async (
   await expect(inspector.getByText('Selected room')).toBeVisible();
   await expect(inspector.getByText('1.50m x 1.50m')).toBeVisible();
 
-  const beforeBox = await bedroom.boundingBox();
-  if (!beforeBox) throw new Error('Bedroom was not rendered');
+  const eastHandle = page.getByTestId('resize-bedroom-1-e');
+  const handleBox = await eastHandle.boundingBox();
+  if (!handleBox) throw new Error('Bedroom resize handle was not rendered');
 
   await page.mouse.move(
-    beforeBox.x + beforeBox.width,
-    beforeBox.y + beforeBox.height / 2
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
   );
   await page.mouse.down();
   await page.mouse.move(
-    beforeBox.x + beforeBox.width + 60,
-    beforeBox.y + beforeBox.height / 2
+    handleBox.x + handleBox.width / 2 + 60,
+    handleBox.y + handleBox.height / 2
   );
   await page.mouse.up();
 
@@ -76,8 +77,9 @@ test('keeps precise setup measurements instead of rounding to the grid', async (
   await page.getByTestId('add-bedroom').click();
   await page.getByRole('button', { name: 'Continue' }).click();
 
-  await page.getByLabel('Width m').fill('3.4');
-  await expect(page.getByLabel('Width m')).toHaveValue('3.40');
+  await page.getByLabel('Width m').click();
+  await page.keyboard.type('2.8');
+  await expect(page.getByLabel('Width m')).toHaveValue('2.8');
 
   await page.getByRole('button', { name: 'Create plan' }).click();
 
@@ -85,7 +87,81 @@ test('keeps precise setup measurements instead of rounding to the grid', async (
   await expect(bedroom).toBeVisible();
   await bedroom.click({ position: { x: 32, y: 32 } });
 
-  await expect(page.getByRole('complementary')).toContainText('3.40m x 1.50m');
+  await expect(page.getByRole('complementary')).toContainText('2.80m x 1.50m');
+});
+
+test('fine tunes baseline room dimensions from the inspector', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByTestId('add-bedroom').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Create plan' }).click();
+
+  await page.getByRole('button', { name: 'Select Bedroom' }).click();
+  const inspector = page.getByRole('complementary');
+
+  await inspector.getByLabel('Width m').click();
+  await page.keyboard.type('2.8');
+  await expect(inspector.getByLabel('Width m')).toHaveValue('2.8');
+  await expect(inspector).toContainText('2.80m x 1.50m');
+
+  await inspector.getByLabel('Depth m').click();
+  await page.keyboard.type('3.2');
+  await expect(inspector.getByLabel('Depth m')).toHaveValue('3.2');
+  await expect(inspector).toContainText('2.80m x 3.20m');
+});
+
+test('adds and merges rooms while configuring an unlocked baseline', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByTestId('add-bedroom').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Create plan' }).click();
+
+  await page.getByRole('button', { name: 'Select Bedroom' }).click();
+  await page.getByRole('button', { name: 'Add room' }).click();
+  await page.getByRole('menuitem', { name: 'Bathroom' }).click();
+
+  await expect(
+    page.getByRole('button', { name: 'Select Bathroom' })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Merge with Bedroom' })
+  ).toBeVisible();
+
+  await page.getByRole('button', { name: 'Merge with Bedroom' }).click();
+
+  await expect(
+    page.getByRole('button', { name: 'Select Bathroom + Bedroom' })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Select Bedroom' })
+  ).toHaveCount(0);
+});
+
+test('removes rooms while configuring an unlocked baseline', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByTestId('add-bedroom').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Create plan' }).click();
+
+  await page.getByRole('button', { name: 'Select Bedroom' }).click();
+  await expect(page.getByRole('button', { name: 'Remove room' })).toBeVisible();
+  await page.getByRole('button', { name: 'Remove room' }).click();
+
+  await expect(
+    page.getByRole('button', { name: 'Select Bedroom' })
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Lock baseline' })
+  ).toBeDisabled();
 });
 
 test('creates an existing baseline from whole-area dimensions', async ({
@@ -99,12 +175,42 @@ test('creates an existing baseline from whole-area dimensions', async ({
     page.getByText('Preview: width is horizontal, length is vertical')
   ).toBeVisible();
   await page.getByRole('button', { name: 'Swap width/length' }).click();
-  await page.getByRole('button', { name: 'Create plan' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
 
   const wholeArea = page.getByRole('button', { name: 'Select Whole area' });
   await expect(wholeArea).toBeVisible();
   await expect(page.getByRole('complementary')).toContainText('8.00m x 5.50m');
   await expect(page.getByRole('complementary')).toContainText('1');
+});
+
+test('creates an existing baseline from whole-area dimensions and rooms', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByLabel('Width m').fill('7');
+  await page.getByLabel('Length m').fill('9');
+  await page.getByTestId('add-bedroom').click();
+  await page.getByTestId('add-kitchen').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+
+  await expect(
+    page.getByText('Add measurements inside the whole area')
+  ).toBeVisible();
+  await page.getByLabel('Width m').first().fill('3.4');
+  await page.getByLabel('Depth m').first().fill('3');
+  await page.getByRole('button', { name: 'Create plan' }).click();
+
+  await expect(
+    page.getByRole('button', { name: 'Select Whole area' })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Select Bedroom' })
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Select Kitchen' })
+  ).toBeVisible();
+  await expect(page.getByRole('complementary')).toContainText('3');
 });
 
 test('locks a baseline and creates a bounded renovation scenario', async ({
@@ -128,8 +234,9 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await page.getByRole('menuitem', { name: 'Add door/opening' }).click();
   await expect(page.getByText('Openings')).toBeVisible();
   await expect(page.getByTestId('selected-wall-openings')).toHaveText('1');
-  await page.getByLabel('Offset m').fill('0.50');
-  await expect(page.getByLabel('Offset m')).toHaveValue('0.50');
+  await page.getByLabel('Offset m').click();
+  await page.keyboard.type('0.5');
+  await expect(page.getByLabel('Offset m')).toHaveValue('0.5');
 
   await page.getByRole('button', { name: 'Lock baseline' }).click();
   await expect(
@@ -238,7 +345,7 @@ test('keeps precise proposed room measurements from inspector inputs', async ({
   await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByLabel('Width m').fill('6');
   await page.getByLabel('Length m').fill('8');
-  await page.getByRole('button', { name: 'Create plan' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
   await page.getByRole('button', { name: 'Lock baseline' }).click();
   await page.getByRole('button', { name: 'Create scenario' }).click();
   await page.getByRole('button', { name: 'Add room' }).click();
@@ -246,10 +353,7 @@ test('keeps precise proposed room measurements from inspector inputs', async ({
 
   const inspector = page.getByRole('complementary');
   await inspector.getByLabel('Width m').click();
-  await page.keyboard.press(
-    process.platform === 'darwin' ? 'Meta+A' : 'Control+A'
-  );
-  await page.keyboard.type('1.57');
-  await expect(inspector.getByLabel('Width m')).toHaveValue('1.57');
-  await expect(page.getByText('1.57m width')).toBeVisible();
+  await page.keyboard.type('2.8');
+  await expect(inspector.getByLabel('Width m')).toHaveValue('2.8');
+  await expect(page.getByText('2.80m width')).toBeVisible();
 });
