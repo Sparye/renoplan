@@ -69,6 +69,36 @@ test('scales the canvas viewport for a large measured room', async ({
   );
 });
 
+test('keeps wall actions menu inside the browser viewport', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 640, height: 720 });
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByTestId('add-bedroom').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByLabel('Width m').fill('8');
+  await page.getByLabel('Depth m').fill('4');
+  await page.getByRole('button', { name: 'Create plan' }).click();
+
+  const scroller = page.locator('.overflow-auto').last();
+  await scroller.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+
+  await page
+    .locator('[data-testid^="wall-bedroom-1-east"][data-testid$="-hitbox"]')
+    .click({ position: { x: 8, y: 40 } });
+
+  const menu = page.getByRole('menu', { name: 'Wall actions' });
+  await expect(menu).toBeVisible();
+  const menuBox = await menu.boundingBox();
+  if (!menuBox) throw new Error('Wall actions menu was not rendered');
+
+  expect(menuBox.x).toBeGreaterThanOrEqual(8);
+  expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(632);
+});
+
 test('keeps precise setup measurements instead of rounding to the grid', async ({
   page
 }) => {

@@ -11,7 +11,7 @@
     Trash2,
     Undo2
   } from '@lucide/svelte';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import {
     editor,
     GRID_SIZE,
@@ -39,8 +39,11 @@
   const CANVAS_WIDTH = 960;
   const CANVAS_HEIGHT = 620;
   const CANVAS_PADDING = GRID_SIZE * 2;
+  const CONTEXT_MENU_GAP = 10;
+  const VIEWPORT_MARGIN = 8;
 
   let canvas: SVGSVGElement;
+  let wallMenuElement: HTMLDivElement;
   let interaction:
     | {
         mode: 'move';
@@ -456,6 +459,47 @@
     return point.matrixTransform(canvas.getScreenCTM()?.inverse());
   }
 
+  function clampedMenuCoordinate(
+    anchor: number,
+    menuSize: number,
+    viewportSize: number
+  ) {
+    const preferred = anchor + CONTEXT_MENU_GAP;
+    const flipped = anchor - menuSize - CONTEXT_MENU_GAP;
+    const max = viewportSize - menuSize - VIEWPORT_MARGIN;
+    const next = preferred > max ? flipped : preferred;
+
+    return Math.min(
+      Math.max(next, VIEWPORT_MARGIN),
+      Math.max(max, VIEWPORT_MARGIN)
+    );
+  }
+
+  async function openWallMenu(
+    wallId: string,
+    anchorX: number,
+    anchorY: number,
+    offset: number
+  ) {
+    wallMenu = {
+      wallId,
+      x: anchorX + CONTEXT_MENU_GAP,
+      y: anchorY + CONTEXT_MENU_GAP,
+      offset
+    };
+
+    await tick();
+
+    if (wallMenu?.wallId !== wallId || !wallMenuElement) return;
+
+    const rect = wallMenuElement.getBoundingClientRect();
+    wallMenu = {
+      ...wallMenu,
+      x: clampedMenuCoordinate(anchorX, rect.width, window.innerWidth),
+      y: clampedMenuCoordinate(anchorY, rect.height, window.innerHeight)
+    };
+  }
+
   function pixelsFromMetres(value: string) {
     const metres = Number(value);
     if (!Number.isFinite(metres)) return null;
@@ -602,13 +646,13 @@
       };
       canvas.setPointerCapture(event.pointerId);
     }
-    wallMenu = {
-      wallId,
-      x: event.clientX,
-      y: event.clientY,
-      offset: wall ? wallOffsetFromPoint(wall, point.x, point.y) : 0
-    };
     editor.selectWall(wallId);
+    void openWallMenu(
+      wallId,
+      event.clientX,
+      event.clientY,
+      wall ? wallOffsetFromPoint(wall, point.x, point.y) : 0
+    );
   }
 
   function handleCanvasPointerDown(event: PointerEvent) {
@@ -859,6 +903,25 @@
           x2: Math.min(wall.x1, wall.x2) + offset + opening.width,
           y2: wall.y2
         };
+  }
+
+  function doorLeafPosition(wall: Wall, opening: Opening) {
+    const position = openingPosition(wall, opening);
+    const dx = position.x2 - position.x1;
+    const dy = position.y2 - position.y1;
+    const length = Math.hypot(dx, dy);
+    const leafLength = Math.min(length, GRID_SIZE * 2);
+    const unitX = length === 0 ? 1 : dx / length;
+    const unitY = length === 0 ? 0 : dy / length;
+    const normalX = -unitY;
+    const normalY = unitX;
+
+    return {
+      x1: position.x1,
+      y1: position.y1,
+      x2: position.x1 + unitX * leafLength + normalX * leafLength,
+      y2: position.y1 + unitY * leafLength + normalY * leafLength
+    };
   }
 
   function wallHitbox(wall: Wall) {
@@ -2311,8 +2374,9 @@
       <div class="min-h-0 min-w-0 overflow-auto p-6">
         {#if wallMenu && $selectedWall && canEditWalls}
           <div
+            bind:this={wallMenuElement}
             class="fixed z-20 grid min-w-44 gap-1 rounded-md border border-[#b8c4d1] bg-white p-1.5 shadow-lg"
-            style={`left: ${wallMenu.x + 10}px; top: ${wallMenu.y + 10}px;`}
+            style={`left: ${wallMenu.x}px; top: ${wallMenu.y}px;`}
             role="menu"
             aria-label="Wall actions"
           >
@@ -2520,6 +2584,7 @@
                   />
                   {#each wallOpenings(wall) as opening (opening.id)}
                     {@const position = openingPosition(wall, opening)}
+                    {@const doorLeaf = doorLeafPosition(wall, opening)}
                     <line
                       class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
                       x1={position.x1}
@@ -2527,13 +2592,23 @@
                       x2={position.x2}
                       y2={position.y2}
                     />
-                    <line
-                      class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[2]`}
-                      x1={position.x1}
-                      y1={position.y1}
-                      x2={position.x2}
-                      y2={position.y2}
-                    />
+                    {#if opening.kind === 'door'}
+                      <line
+                        class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[2]`}
+                        x1={doorLeaf.x1}
+                        y1={doorLeaf.y1}
+                        x2={doorLeaf.x2}
+                        y2={doorLeaf.y2}
+                      />
+                    {:else}
+                      <line
+                        class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[2]`}
+                        x1={position.x1}
+                        y1={position.y1}
+                        x2={position.x2}
+                        y2={position.y2}
+                      />
+                    {/if}
                   {/each}
                 </g>
               {/if}
@@ -2711,6 +2786,7 @@
                     />
                     {#each wallOpenings(wall) as opening (opening.id)}
                       {@const position = openingPosition(wall, opening)}
+                      {@const doorLeaf = doorLeafPosition(wall, opening)}
                       <line
                         class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
                         x1={position.x1}
@@ -2718,13 +2794,23 @@
                         x2={position.x2}
                         y2={position.y2}
                       />
-                      <line
-                        class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[2]`}
-                        x1={position.x1}
-                        y1={position.y1}
-                        x2={position.x2}
-                        y2={position.y2}
-                      />
+                      {#if opening.kind === 'door'}
+                        <line
+                          class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[2]`}
+                          x1={doorLeaf.x1}
+                          y1={doorLeaf.y1}
+                          x2={doorLeaf.x2}
+                          y2={doorLeaf.y2}
+                        />
+                      {:else}
+                        <line
+                          class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[2]`}
+                          x1={position.x1}
+                          y1={position.y1}
+                          x2={position.x2}
+                          y2={position.y2}
+                        />
+                      {/if}
                     {/each}
                   </g>
                 {/if}
@@ -2894,6 +2980,7 @@
                     />
                     {#each wallOpenings(wall) as opening (opening.id)}
                       {@const position = openingPosition(wall, opening)}
+                      {@const doorLeaf = doorLeafPosition(wall, opening)}
                       <line
                         class="pointer-events-none stroke-[#eef2f6] stroke-[10]"
                         x1={position.x1}
@@ -2901,13 +2988,23 @@
                         x2={position.x2}
                         y2={position.y2}
                       />
-                      <line
-                        class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[3]`}
-                        x1={position.x1}
-                        y1={position.y1}
-                        x2={position.x2}
-                        y2={position.y2}
-                      />
+                      {#if opening.kind === 'door'}
+                        <line
+                          class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[3]`}
+                          x1={doorLeaf.x1}
+                          y1={doorLeaf.y1}
+                          x2={doorLeaf.x2}
+                          y2={doorLeaf.y2}
+                        />
+                      {:else}
+                        <line
+                          class={`pointer-events-none ${openingStrokeClass(opening.kind)} stroke-[3]`}
+                          x1={position.x1}
+                          y1={position.y1}
+                          x2={position.x2}
+                          y2={position.y2}
+                        />
+                      {/if}
                     {/each}
                   </g>
                 {/if}
