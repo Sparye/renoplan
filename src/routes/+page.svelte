@@ -1467,9 +1467,11 @@
   </main>
 {:else}
   <main
-    class="grid min-h-screen grid-cols-[320px_minmax(0,1fr)] bg-[#f4f6f8] text-[#17202a]"
+    class="grid h-screen overflow-hidden grid-cols-[320px_minmax(0,1fr)] bg-[#f4f6f8] text-[#17202a]"
   >
-    <aside class="flex flex-col gap-5 border-r border-[#d8dee5] bg-white p-6">
+    <aside
+      class="flex min-h-0 flex-col gap-5 overflow-y-auto border-r border-[#d8dee5] bg-white p-6"
+    >
       <div>
         <p
           class="mb-2 text-[0.78rem] font-bold tracking-normal text-[#6b7682] uppercase"
@@ -1603,10 +1605,10 @@
             Scenario details
           </h2>
           {#if activeScenario}
-            <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+            <label class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]">
               Scenario name
               <input
-                class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                 value={activeScenario.name}
                 oninput={(event) => {
                   editor.renameScenario(
@@ -1674,7 +1676,7 @@
               >
                 Width m
                 <input
-                  class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                  class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                   inputmode="decimal"
                   min="0.5"
                   step="0.01"
@@ -1699,7 +1701,7 @@
               >
                 Depth m
                 <input
-                  class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                  class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                   inputmode="decimal"
                   min="0.5"
                   step="0.01"
@@ -1768,10 +1770,10 @@
               Overlay
             </span>
           </div>
-          <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+          <label class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]">
             Room name
             <input
-              class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+              class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
               value={$selectedProposedRoom.name}
               oninput={(event) => {
                 editor.updateProposedRoom($selectedProposedRoom.id, {
@@ -1785,7 +1787,7 @@
             <label class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]">
               Width m
               <input
-                class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                 inputmode="decimal"
                 min="0.5"
                 step="0.01"
@@ -1808,7 +1810,7 @@
             <label class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]">
               Depth m
               <input
-                class="min-h-9 min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                 inputmode="decimal"
                 min="0.5"
                 step="0.01"
@@ -1885,10 +1887,11 @@
                           </span>
                         </div>
                         <label
-                          class="grid gap-1 text-xs font-bold text-[#66717e]"
+                          class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
                         >
                           Position along wall
                           <input
+                            class="w-full min-w-0"
                             type="range"
                             min="0"
                             max={maxOffset}
@@ -1902,13 +1905,13 @@
                             }}
                           />
                         </label>
-                        <div class="grid grid-cols-2 gap-2">
+                        <div class="grid min-w-0 grid-cols-2 gap-2">
                           <label
-                            class="grid gap-1 text-xs font-bold text-[#66717e]"
+                            class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
                           >
                             Position m
                             <input
-                              class="min-h-8 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                              class="min-h-8 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                               inputmode="decimal"
                               min="0"
                               step="0.25"
@@ -1933,11 +1936,11 @@
                             />
                           </label>
                           <label
-                            class="grid gap-1 text-xs font-bold text-[#66717e]"
+                            class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
                           >
                             Length m
                             <input
-                              class="min-h-8 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                              class="min-h-8 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                               inputmode="decimal"
                               min="0.25"
                               step="0.25"
@@ -2057,10 +2060,12 @@
                       {pixelsToMetres(opening.offset).toFixed(2)}m from start
                     </span>
                   </div>
-                  <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+                  <label
+                    class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
+                  >
                     Type
                     <select
-                      class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                      class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                       value={opening.kind}
                       onchange={(event) => {
                         editor.updateOpening(opening.id, {
@@ -2074,9 +2079,12 @@
                       {/each}
                     </select>
                   </label>
-                  <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+                  <label
+                    class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
+                  >
                     Position
                     <input
+                      class="w-full min-w-0"
                       type="range"
                       min="0"
                       max={maxOffset}
@@ -2090,11 +2098,13 @@
                       }}
                     />
                   </label>
-                  <div class="grid grid-cols-2 gap-2">
-                    <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+                  <div class="grid min-w-0 grid-cols-2 gap-2">
+                    <label
+                      class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
+                    >
                       Offset m
                       <input
-                        class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                        class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                         inputmode="decimal"
                         min="0"
                         step="0.25"
@@ -2114,10 +2124,12 @@
                           )}
                       />
                     </label>
-                    <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+                    <label
+                      class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
+                    >
                       Length m
                       <input
-                        class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                        class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                         inputmode="decimal"
                         min="0.25"
                         step="0.25"
@@ -2179,10 +2191,12 @@
                   Vertical
                 </button>
               </div>
-              <label class="grid gap-1 text-xs font-bold text-[#66717e]">
+              <label
+                class="grid min-w-0 gap-1 text-xs font-bold text-[#66717e]"
+              >
                 Length m
                 <input
-                  class="min-h-9 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
+                  class="min-h-9 w-full min-w-0 rounded-md border border-[#c8d1dc] bg-white px-2 text-sm text-[#17202a]"
                   inputmode="decimal"
                   min="0.25"
                   step="0.25"
@@ -2909,26 +2923,6 @@
                     >
                       {pixelsToMetres(room.height).toFixed(2)}m depth
                     </text>
-                    {#each resizeHandles(room) as item (item.handle)}
-                      <!-- svelte-ignore a11y_no_static_element_interactions -->
-                      <rect
-                        class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
-                        x={item.x - 5}
-                        y={item.y - 5}
-                        width="10"
-                        height="10"
-                        rx="2"
-                        data-testid={`resize-${room.id}-${item.handle}`}
-                        vector-effect="non-scaling-stroke"
-                        onpointerdown={(event) =>
-                          handleResizePointerDown(
-                            event,
-                            room.id,
-                            item.handle,
-                            'proposed-room'
-                          )}
-                      />
-                    {/each}
                   {/if}
                 </g>
               {/each}
@@ -3009,6 +3003,31 @@
                   </g>
                 {/if}
               {/each}
+            {/if}
+
+            {#if isScenarioMode && $selectedProposedRoom}
+              <g aria-label={`Resize ${$selectedProposedRoom.name}`}>
+                {#each resizeHandles($selectedProposedRoom) as item (item.handle)}
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <rect
+                    class={`fill-white stroke-[#0f766e] stroke-[2] ${handleCursors[item.handle]}`}
+                    x={item.x - 5}
+                    y={item.y - 5}
+                    width="10"
+                    height="10"
+                    rx="2"
+                    data-testid={`resize-${$selectedProposedRoom.id}-${item.handle}`}
+                    vector-effect="non-scaling-stroke"
+                    onpointerdown={(event) =>
+                      handleResizePointerDown(
+                        event,
+                        $selectedProposedRoom.id,
+                        item.handle,
+                        'proposed-room'
+                      )}
+                  />
+                {/each}
+              </g>
             {/if}
           </svg>
         {/if}

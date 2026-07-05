@@ -1,4 +1,42 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+
+async function expectSidebarFormControlsToFit(page: Page) {
+  const offenders = await page
+    .getByRole('complementary')
+    .evaluate((sidebar) => {
+      const sidebarBox = sidebar.getBoundingClientRect();
+      const controls = Array.from(
+        sidebar.querySelectorAll('input, select, textarea')
+      );
+
+      return controls
+        .filter((control) => {
+          const element = control;
+          const box = element.getBoundingClientRect();
+
+          return (
+            box.width > 0 &&
+            box.height > 0 &&
+            (box.left < sidebarBox.left - 1 || box.right > sidebarBox.right + 1)
+          );
+        })
+        .map((control) => {
+          const element = control;
+          const box = element.getBoundingClientRect();
+
+          return {
+            tag: element.tagName.toLowerCase(),
+            type: element.getAttribute('type'),
+            left: box.left,
+            right: box.right,
+            sidebarLeft: sidebarBox.left,
+            sidebarRight: sidebarBox.right
+          };
+        });
+    });
+
+  expect(offenders).toEqual([]);
+}
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -264,6 +302,7 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await page.getByRole('menuitem', { name: 'Add door/opening' }).click();
   await expect(page.getByText('Openings')).toBeVisible();
   await expect(page.getByTestId('selected-wall-openings')).toHaveText('1');
+  await expectSidebarFormControlsToFit(page);
   await page.getByLabel('Offset m').click();
   await page.keyboard.type('0.5');
   await expect(page.getByLabel('Offset m')).toHaveValue('0.5');
@@ -355,6 +394,7 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   await proposedRoom.click();
   await page.getByRole('button', { name: 'Window' }).first().click();
   await expect(page.getByLabel('Position along wall')).toBeVisible();
+  await expectSidebarFormControlsToFit(page);
 
   await page.getByRole('button', { name: 'Baseline' }).click();
   await expect(
@@ -391,6 +431,59 @@ test('locks a baseline and creates a bounded renovation scenario', async ({
   );
 });
 
+test('keeps a tall renovation room inspector scrollable within the sidebar', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1024, height: 620 });
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByLabel('Project name').fill('Sidebar scroll test');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByTestId('add-bedroom').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Create plan' }).click();
+  await page.getByRole('button', { name: 'Lock baseline' }).click();
+  await page.getByRole('button', { name: 'Create scenario' }).click();
+  await page.getByRole('button', { name: 'Add room' }).click();
+  await page.getByRole('menuitem', { name: 'Bathroom' }).click();
+
+  const inspector = page.getByRole('complementary');
+  await expect(
+    page.getByRole('button', { name: 'Select proposed Bathroom 1' })
+  ).toBeVisible();
+  await expect(
+    inspector.getByRole('heading', { name: 'Proposed room' })
+  ).toBeVisible();
+
+  for (let index = 0; index < 8; index += 1) {
+    await inspector.getByRole('button', { name: 'Window' }).first().click();
+  }
+  await expectSidebarFormControlsToFit(page);
+
+  const sidebarMetrics = await inspector.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+
+    return {
+      clientHeight: element.clientHeight,
+      overflowY: style.overflowY,
+      scrollHeight: element.scrollHeight
+    };
+  });
+
+  expect(sidebarMetrics.overflowY).toBe('auto');
+  expect(sidebarMetrics.scrollHeight).toBeGreaterThan(
+    sidebarMetrics.clientHeight
+  );
+
+  const pageMetrics = await page.evaluate(() => ({
+    bodyScrollHeight: document.body.scrollHeight,
+    viewportHeight: window.innerHeight
+  }));
+
+  expect(pageMetrics.bodyScrollHeight).toBeLessThanOrEqual(
+    pageMetrics.viewportHeight + 1
+  );
+});
+
 test('keeps precise proposed room measurements from inspector inputs', async ({
   page
 }) => {
@@ -409,4 +502,47 @@ test('keeps precise proposed room measurements from inspector inputs', async ({
   await page.keyboard.type('2.8');
   await expect(inspector.getByLabel('Width m')).toHaveValue('2.8');
   await expect(page.getByText('2.80m width')).toBeVisible();
+});
+
+test('resizes a proposed room after adding an opening to its wall', async ({
+  page
+}) => {
+  await page.getByRole('button', { name: 'New project' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByLabel('Width m').fill('6');
+  await page.getByLabel('Length m').fill('8');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Lock baseline' }).click();
+  await page.getByRole('button', { name: 'Create scenario' }).click();
+  await page.getByRole('button', { name: 'Add room' }).click();
+  await page.getByRole('menuitem', { name: 'Bedroom' }).click();
+
+  const proposedRoom = page.getByRole('button', {
+    name: 'Select proposed Bedroom 1'
+  });
+  await expect(proposedRoom).toBeVisible();
+  await page.getByRole('button', { name: 'Window' }).first().click();
+
+  const eastHandle = page.locator(
+    '[data-testid^="resize-proposed-room-"][data-testid$="-e"]'
+  );
+  const handleBox = await eastHandle.boundingBox();
+  if (!handleBox) {
+    throw new Error('Proposed room east resize handle was not rendered');
+  }
+
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    handleBox.x + handleBox.width / 2 + 60,
+    handleBox.y + handleBox.height / 2
+  );
+  await page.mouse.up();
+
+  await expect(
+    page.getByRole('complementary').getByLabel('Width m')
+  ).toHaveValue('2.50');
 });
