@@ -1,57 +1,83 @@
 # Renoplan Context
 
-Renoplan helps homeowners model an existing single-level floor plan, lock it as a baseline, and explore conceptual renovation scenarios inside the same footprint.
+Renoplan lets a homeowner capture the existing plan of a single-level house, explore renovation options as Scenarios that change that plan, and compare them side by side. It is for conceptual exploration — not CAD, engineering, permits, or construction drawings.
+
+Product intent and v1 scope live in `docs/intent.md`. Decisions live in `docs/adr/`. The pre-rebuild prototype's docs are kept in `docs/legacy/` for reference only; their terms (Baseline, Proposed Layout, Reference Background…) are retired.
 
 ## Language
 
-**Existing Layout**:
-The user's current home layout as assembled from room blocks before renovation exploration begins. A locked Existing Layout is used as reference material for renovation scenarios.
-_Avoid_: original layout, current plan, old plan
+**Project**:
+One house being planned. Holds exactly one Existing Plan and any number of Scenarios.
 
-**Baseline**:
-A locked version of an Existing Layout, including its room arrangement and derived footprint. A Baseline is not directly edited by renovation scenario work.
-_Avoid_: master plan, source plan
-
-**Footprint**:
-The outer boundary derived from a Baseline. Renovation scenarios are prevented from leaving the Footprint unless the product explicitly supports footprint-changing work later, and the Footprint remains visible even when the Reference Background is hidden.
-_Avoid_: bounds, canvas bounds, shell
+**Existing Plan**:
+The house as it is today, captured by the user. It is the thing every Scenario changes. Always editable — there is no lock and no versioning; Scenarios pick up corrections automatically (ADR 0005).
+_Avoid_: baseline, original layout, current plan, locked plan
 
 **Scenario**:
-A proposed renovation layout inside a Baseline's Footprint. A Scenario contains proposed layout work and may show the Baseline as a non-editable reference background.
-_Avoid_: copy of baseline, edited baseline
+One renovation option, expressed as a set of Changes to the Existing Plan — not a separate copy of the plan.
+_Avoid_: proposed layout, option copy, version
 
-**Baseline Review**:
-The mode where a locked Baseline is viewed as the existing layout. It is distinct from Scenario editing, where the Proposed Layout is changed.
-_Avoid_: scenario review, locked editor
+**Change**:
+A single difference a Scenario makes to the Existing Plan: something Demolished, something New, or something Modified.
 
-**Reference Background**:
-A scenario-specific, toggleable, non-editable display of unlabeled Baseline room rectangles inside a Scenario. It is visible by default, visually subdued, and helps the user compare against the Existing Layout without causing proposed rooms to collide with existing rooms.
-_Avoid_: background layer, ghost plan, overlay
+**Modified**:
+A Change that alters an existing element in place — e.g. a Wall moved 600 mm. Stored as one Change so the element keeps its identity; drawn under Show Changes as Demolished (old position) plus New (new position), because that is what gets built.
 
-**Proposed Layout**:
-The editable room arrangement created inside a Scenario. It starts empty when a Scenario is created and is separate from the Baseline's existing rooms.
-_Avoid_: scenario copy, new scenario, proposed rooms layer
+**Show Changes**:
+A per-Scenario display toggle that draws renovation styling: Demolished Walls dashed, New Walls highlighted.
 
-**Proposed Room**:
-An editable room rectangle that belongs to a Proposed Layout. Proposed Rooms are separate from the rooms captured in a Baseline.
-_Avoid_: copied room, baseline room
+**Mode**:
+The editor is one editor with two Modes: **Existing Plan** and **Scenario**. Same gestures in both; in Scenario Mode, deleting an existing Wall marks it Demolished, removing the Wall between two Rooms merges them, and Draw Wall creates New Walls.
+_Avoid_: baseline review, locked editor
 
-**Proposed Wall Surface**:
-A door-placement surface derived from a Proposed Room rectangle. Proposed Wall Surfaces do not need to model shared-wall relationships between adjacent Proposed Rooms.
-_Avoid_: shared proposed wall, shared wall model
+**Change Status**:
+How an element appears in a Scenario: **Retained** (exists today and stays), **Demolished** (exists today and is removed), or **New** (added by the Scenario). Mirrors the existing / demolish / new convention of renovation drawings.
+_Avoid_: deleted, added, proposed
 
-**Proposed Room Collision**:
-A conflict between editable proposed rooms in a Proposed Layout. Proposed Room Collisions are prevented by clamping moves and resizes to the nearest valid position; Baseline rooms shown in the Reference Background are not collision participants.
-_Avoid_: existing room collision, background collision
+**Outline**:
+The outside dimensions of the house that the user enters first during capture, measured over the exterior Walls.
+_Avoid_: whole area, space, envelope
 
-## Example Dialogue
+**Unlabelled Space**:
+A region enclosed by Walls that no Room claims — typically a hallway or cupboard the user never measured. Created automatically, shown with its area, ready to be named.
+_Avoid_: gap, leftover
 
-Designer: "After the homeowner locks the Existing Layout, we create a Baseline from it."
+**Overlap**:
+A visible, non-blocking state where a Room sits on top of another Room or crosses the Outline. Shown in red; the app never blocks or clamps a drag to prevent it.
+_Avoid_: collision
 
-Developer: "When they open a Scenario, do we copy the Baseline rooms into the editable plan?"
+**Footprint**:
+The outer boundary of the Existing Plan.
+_Avoid_: bounds, shell
 
-Designer: "No. The Scenario starts with an empty Proposed Layout. The Baseline can be shown as a Reference Background, but those existing rooms are not editable and do not collide with proposed rooms."
+**Extension**:
+Any part of a Scenario that lies outside the Footprint. Allowed, and always flagged in the UI.
+_Avoid_: addition (ambiguous with a New element)
 
-Developer: "So collision checks for proposed rooms should compare against the Proposed Layout and Footprint, not the Baseline rooms."
+**Wall**:
+An orthogonal (horizontal or vertical) segment of wall with a thickness. Walls are the primary geometry: Rooms are derived from them (ADR 0004). Default thickness is about 200 mm for exterior Walls and 100 mm for interior Walls, editable per Wall.
 
-Designer: "Yes. Doors can attach to Proposed Wall Surfaces, but we do not need shared-wall modelling for Proposed Rooms yet."
+**Shared Wall**:
+A single Wall separating two Rooms. There is never a double wall where two Rooms meet.
+
+**Structural Mark**:
+The user's belief that a Wall is load-bearing. It is a note, not an engineering assessment, and drives warnings such as "this Scenario demolishes a Wall marked structural".
+_Avoid_: load-bearing (implies verification)
+
+**Opening**:
+A door, window, or plain opening hosted by a Wall.
+
+**Room**:
+A space enclosed by Walls, with a free-text name and an optional **Room Type** (bedroom, bathroom, kitchen, living, laundry, hallway, other — guessed from the name; drives tint now and Fixture suggestions later). Room dimensions are always inside dimensions. Its shape is derived from the Walls, so it may be any orthogonal polygon (L-shapes, notches). Its area is computed from the inside faces of its Walls.
+
+**Conflict**:
+A Change in a Scenario that no longer applies because the Existing Plan was edited underneath it (e.g. the Scenario demolishes a Wall that has since been deleted from the Existing Plan). Shown to the user to resolve.
+
+**Fixture**:
+A fixed plumbing or kitchen element (sink, toilet, shower, oven…). Planned for after v1.
+
+**Comparison**:
+A side-by-side view of two Scenarios (or a Scenario and the Existing Plan).
+
+**Export**:
+A PNG or PDF of one Scenario or one Comparison, for discussing options with other people.
