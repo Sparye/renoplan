@@ -35,11 +35,11 @@ How an element appears in a Scenario: **Retained** (exists today and stays), **D
 _Avoid_: deleted, added, proposed
 
 **Outline**:
-The outside dimensions of the house that the user enters first during capture, measured over the exterior Walls.
+The outside dimensions of the house that the user enters first during capture, measured over the exterior Walls. Because it is measured, dragging an exterior Wall resizes the Rooms against it, not the Outline (ADR 0007).
 _Avoid_: whole area, space, envelope
 
 **Unlabelled Space**:
-A region enclosed by Walls that no Room claims — typically a hallway or cupboard the user never measured. Created automatically, shown with its area, ready to be named.
+A region enclosed by Walls that no Room claims — typically a hallway or cupboard the user never measured. Created automatically, shown with its area, ready to be named. Strips thinner than ~300 mm are measurement slop and are absorbed into the Wall instead.
 _Avoid_: gap, leftover
 
 **Overlap**:

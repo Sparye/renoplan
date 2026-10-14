@@ -1,6 +1,6 @@
 # Renoplan Intent
 
-Last updated: 2026-10-13
+Last updated: 2026-10-14
 
 ## Why rebuild
 
@@ -20,7 +20,7 @@ Dragging and attaching room blocks felt off and inflexible: blocks and lines ove
 
 ## Core loop (v1 is exactly this)
 
-1. **Capture** the Existing Plan — built first, and must be excellent; everything downstream depends on it. Enter the Outline's outside dimensions, enter each Room's dimensions, then drag Rooms into place (ADR 0007, to be validated by a prototype first).
+1. **Capture** the Existing Plan — built first, and must be excellent; everything downstream depends on it. Enter the Outline's outside dimensions, enter each Room's dimensions, then drag Rooms into place (ADR 0007, validated by the prototype).
 2. **Create Scenarios** as tracked Changes to the Existing Plan (ADR 0001).
 3. **Compare** two Scenarios side by side with linked pan/zoom, plus a summary table: area per Room, total area, Walls demolished, Walls with a Structural Mark touched, Extension area. Every Scenario also has a **Show Changes** toggle that draws Demolished Walls dashed and New Walls highlighted.
 4. **Export** a Scenario or Comparison as PNG/PDF.
@@ -49,7 +49,7 @@ Architectural drawing style: white background, solid dark Walls, door swing arcs
 
 ## Build order
 
-1. **Throwaway capture prototype** (ADR 0007) — judged by feel before any real core is written: capture the author's own house in under ~15 minutes without fighting the app.
+1. ~~**Throwaway capture prototype** (ADR 0007)~~ — done 2026-10-14; the interaction was accepted. The code is on the branch `prototype/capture-interaction`.
 2. Real core + capture.
 3. Scenarios, Comparison, Export.
 
