@@ -352,3 +352,6 @@ export function normalize(p: Plan): Plan {
   fitOpenings(p);
   return p;
 }
+
+/** A normalized copy of any plan: what a decoded file goes through. */
+export const normalizePlan = (p: Plan): Plan => normalize(clonePlan(p));

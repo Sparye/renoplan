@@ -3,6 +3,7 @@ export * from './commands';
 export { derive, SLIVER, type Derived, type RoomGeom, type Space, type WallGeom } from './derive';
 export { type Rect, rectsArea } from './grid';
 export { runOf, usableSpan } from './graph';
+export { normalizePlan } from './normalize';
 export * from './history';
 export { checkPlan } from './invariants';
 export * from './plan';
