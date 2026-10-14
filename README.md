@@ -1,62 +1,29 @@
 # Renoplan
 
-A SvelteKit prototype for simple, conceptual renovation planning.
+Capture the existing plan of a single-level house, explore renovation options as Scenarios, and compare them side by side. Conceptual exploration only — not CAD, engineering, or permit drawings.
 
-The app helps homeowners assemble a rough existing single-level floor plan from rectangular room blocks, then explore renovation ideas like resizing rooms, marking shared walls, removing walls, and adding openings.
+- Product intent and v1 scope: [`docs/intent.md`](docs/intent.md)
+- Domain glossary (use these terms): [`CONTEXT.md`](CONTEXT.md)
+- Decisions: [`docs/adr/`](docs/adr/)
 
-## Current Features
+## Layout
 
-- Inventory wizard for generating existing room blocks
-- SVG floor plan canvas with grid snapping
-- Room selection and approximate metric dimensions
-- Dragging and resizing room blocks
-- Shared walls derived when room edges touch
-- Wall actions for structural marks, removal/restoration, and openings
-- Undo and redo for editor changes
-- Local browser persistence with `localStorage`
-- Tailwind CSS styling
-
-## Tech Stack
-
-- SvelteKit
-- TypeScript
-- Tailwind CSS
-- Supabase client scaffold
-- Custom SVG editor
-
-## Getting Started
-
-Install dependencies:
-
-```sh
-npm install
+```
+src/core/         framework-free TypeScript: Wall graph, derivation, commands, snapping, undo/redo
+src/persistence/  versioned document format (Effect Schema), browser storage, file Save/Open
+src/app/          React shell: SVG canvas, side panel, toolbar
+e2e/              Playwright tests
 ```
 
-Start the development server:
+## Development
+
+Node is not required; everything runs on [Bun](https://bun.sh).
 
 ```sh
-npm run dev
+bun install
+bun run dev        # Vite dev server
+bun run test       # Vitest unit tests
+bun run test:e2e   # Playwright (first time: bunx --bun playwright install chromium)
+bun run check      # tsc + eslint + prettier
+bun run build
 ```
-
-Run checks:
-
-```sh
-npm run check
-npm run lint
-npm run build
-```
-
-## Environment
-
-Supabase is scaffolded but not required for the current local prototype.
-
-Copy `.env.example` to `.env` when real Supabase credentials are available:
-
-```sh
-PUBLIC_SUPABASE_URL=
-PUBLIC_SUPABASE_ANON_KEY=
-```
-
-## Project Status
-
-This is an early prototype. It is intended for visual idea exploration, not construction drawings, code compliance, engineering review, or permit-ready plans.
