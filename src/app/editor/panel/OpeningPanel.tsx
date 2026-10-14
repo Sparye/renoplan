@@ -1,4 +1,12 @@
-import { OPENING_PRESETS, type OpeningId, type OpeningKind, deleteOpening, updateOpening } from '@/core';
+import {
+  OPENING_PRESETS,
+  type OpeningId,
+  type OpeningKind,
+  deleteOpening,
+  moveOpening,
+  updateOpening,
+  usableSpan
+} from '@/core';
 import { Button } from '@/app/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/app/components/ui/toggle-group';
 import { useEditorStore } from '../context';
@@ -11,6 +19,7 @@ export function OpeningPanel({ id }: { id: OpeningId }) {
   const plan = useEditor((s) => s.history.present);
   const commit = useEditor((s) => s.commit);
   const o = plan.openings[id]!;
+  const [u0, u1] = usableSpan(plan, o.wall);
   return (
     <Section title={NAMES[o.kind]} hint={`${o.width} mm`}>
       <ToggleGroup
@@ -49,6 +58,17 @@ export function OpeningPanel({ id }: { id: OpeningId }) {
           value={o.width}
           onCommit={(width) => commit(updateOpening(plan, id, { width }))}
         />
+      </div>
+      <h3 className="text-muted-foreground text-xs font-medium">Position</h3>
+      <div className="flex items-center gap-2">
+        <LengthField
+          aria-label="From the start corner"
+          value={o.at - u0}
+          onCommit={(d) => commit(moveOpening(plan, id, u0 + d))}
+        />
+        <span className="text-muted-foreground text-xs">from one corner,</span>
+        <span className="text-xs tabular-nums">{((u1 - o.at - o.width) / 1000).toFixed(2)} m</span>
+        <span className="text-muted-foreground text-xs">to the other</span>
       </div>
       {o.kind === 'door' && (
         <div className="flex gap-1.5">
