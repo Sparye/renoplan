@@ -4,6 +4,7 @@ import {
   type Plan,
   type RoomId,
   type WallId,
+  along,
   claims,
   faceOf,
   faceOffsets,
@@ -50,8 +51,10 @@ export function detachFrom(p: Plan, room: RoomId, walls: readonly WallId[]): Map
     w[side] = null;
     copies.push({ orig: id, copy, moved: c !== l.c });
   }
-  // Two moved copies whose originals met at a corner meet where their new centrelines cross. Their end
-  // nodes are fresh, so moving them touches nothing else.
+  // Two moved copies whose originals met at a corner meet where their new centrelines cross: each copy's
+  // end at the corner moves there. A stub whose other end already lies there (left at an inside corner
+  // where a Room's Wall fused into a thicker one) stays as it is, or it would collapse. Their end nodes
+  // are fresh, so moving them touches nothing else.
   for (const k1 of copies)
     for (const k2 of copies) {
       if (!k1.moved || !k2.moved) continue;
@@ -60,9 +63,11 @@ export function detachFrom(p: Plan, room: RoomId, walls: readonly WallId[]): Map
       const l1 = wallLine(p, p.walls[k1.copy]!);
       const l2 = wallLine(p, p.walls[k2.copy]!);
       if (l1.axis === l2.axis) continue;
-      const end = o1.a === o2.a || o1.a === o2.b ? 'a' : o1.b === o2.a || o1.b === o2.b ? 'b' : null;
-      if (!end) continue;
-      const node = p.nodes[p.walls[k1.copy]![end]]!;
+      const corner = o1.a === o2.a || o1.a === o2.b ? 'a' : o1.b === o2.a || o1.b === o2.b ? 'b' : null;
+      if (!corner) continue;
+      const other = p.nodes[p.walls[k1.copy]![corner === 'a' ? 'b' : 'a']]!;
+      if (along(l1.axis, other) === l2.c) continue;
+      const node = p.nodes[p.walls[k1.copy]![corner]]!;
       if (l1.axis === 'h') node.x = l2.c;
       else node.y = l2.c;
     }

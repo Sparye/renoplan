@@ -3,7 +3,8 @@ import { derive } from '../derive';
 import { emptyPlan } from '../plan';
 import { sharedWalls, size, valid, wallAt } from '../test/helpers';
 import { addOpening } from './openings';
-import { addOutline } from './outline';
+import { addOutline, addWing } from './outline';
+import { pushWall } from './walls';
 import { addRoom, deleteRoom, mergeRooms, moveRoom, nameSpace, renameRoom, setRoomSize } from './rooms';
 
 const base = () => valid(addOutline(emptyPlan(), 10000, 8000, { x: 0, y: 0 }));
@@ -123,6 +124,30 @@ describe('moveRoom', () => {
     const area = derive(hall.plan).rooms[hall.id!]!.area;
     const p = valid(moveRoom(hall.plan, hall.id!, 0, 8000 - 3100));
     expect(derive(p).rooms[hall.id!]!.area).toBe(area);
+  });
+
+  // An L-shaped hall moved out past a wing's corner: its inside corner fuses into the wing's Walls, and
+  // the part of its own Wall left over meets them only in a short stub of the Outline.
+  test.each([
+    ['top', -1300, -1500],
+    ['left', -1500, -1300]
+  ] as const)('moving by zero keeps the area of a hall wrapped around a %s wing corner', (side, dx, dy) => {
+    const o = addWing(addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 }), side, 1500, 1500);
+    const hall = nameSpace(o, 3000, 2500, 'Hallway');
+    const p = valid(moveRoom(hall.plan, hall.id!, dx, dy));
+    expect(derive(p).rooms[hall.id!]!.area).toBe(derive(hall.plan).rooms[hall.id!]!.area);
+    const q = valid(moveRoom(p, hall.id!, 0, 0));
+    expect(derive(q).rooms[hall.id!]!.rects).toEqual(derive(p).rooms[hall.id!]!.rects);
+  });
+
+  test('moving by zero keeps a corner stub joined to the Wall beside it', () => {
+    // Pulling the wing's inside Wall to 1 mm short of the Outline's right Wall leaves the hall a 51 mm
+    // stub of the top Wall at the corner, with the hall's own Wall re-ending on it.
+    const o = addWing(addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 }), 'top', 1500, 1500);
+    const hall = nameSpace(o, 3000, 2500, 'Hallway');
+    const p = valid(pushWall(hall.plan, wallAt(hall.plan, 'v', 1300, hall.id!), 4500));
+    const q = valid(moveRoom(p, hall.id!, 0, 0));
+    expect(derive(q).rooms[hall.id!]!.rects).toEqual(derive(p).rooms[hall.id!]!.rects);
   });
 
   test('a room dragged across the Outline is crossing it', () => {
