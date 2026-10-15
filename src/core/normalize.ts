@@ -229,54 +229,63 @@ function covers(r: Rect, others: readonly Rect[]): boolean {
   return all;
 }
 
+type Merge = { lo: WallId; hi: WallId; neg: string | null; pos: string | null };
+
+/** How two collinear Walls meeting end to end at node n would merge, or null if they can't. */
+function mergeable(p: Plan, n: NodeId, i: WallId, j: WallId, rects: () => Map<WallId, Rect>): Merge | null {
+  const x = p.walls[i]!;
+  const y = p.walls[j]!;
+  if (wallLine(p, x).axis !== wallLine(p, y).axis) return null;
+  const [lo, hi] = x.b === n && y.a === n ? [i, j] : y.b === n && x.a === n ? [j, i] : [null, null];
+  if (!lo || !hi) return null;
+  if (x.thickness !== y.thickness || x.exterior !== y.exterior || x.structural !== y.structural) return null;
+  const merged: Record<Side, string | null> = { neg: null, pos: null };
+  for (const side of ['neg', 'pos'] as const) {
+    if (x[side] === y[side]) {
+      merged[side] = x[side];
+      continue;
+    }
+    const bare = x[side] === null ? i : y[side] === null ? j : null;
+    if (!bare || !faceCovered(p, bare, side, rects())) return null;
+    merged[side] = x[side] ?? y[side];
+  }
+  return { lo, hi, ...merged };
+}
+
+function merge(p: Plan, m: Merge, onMerge?: (drop: WallId, keep: WallId) => void) {
+  const l0 = wallLine(p, p.walls[m.lo]!);
+  const l1 = wallLine(p, p.walls[m.hi]!);
+  const keep = l0.t1 - l0.t0 >= l1.t1 - l1.t0 ? m.lo : m.hi;
+  const drop = keep === m.lo ? m.hi : m.lo;
+  p.walls[keep] = { ...p.walls[keep]!, a: p.walls[m.lo]!.a, b: p.walls[m.hi]!.b, neg: m.neg, pos: m.pos };
+  moveOpenings(p, drop, keep);
+  delete p.walls[drop];
+  onMerge?.(drop, keep);
+}
+
 /**
  * Collinear Walls through a node joining only them merge when all their attributes match. A claim also
  * extends across a piece whose face on that side touches no floor (a corner stub), so the normal form
- * doesn't depend on the order things were fused in.
+ * doesn't depend on the order things were fused in. A node where two such pairs merely cross is undone
+ * too: Walls crossing mid-span are an Overlap, not a junction, and splitting them would cut an Opening.
  */
 export function mergeCollinear(p: Plan, onMerge?: (drop: WallId, keep: WallId) => void): boolean {
   const inc = incidence(p);
-  let rects: Map<WallId, Rect> | null = null;
+  let cache: Map<WallId, Rect> | null = null;
+  const rects = () => (cache ??= new Map(Object.keys(p.walls).map((id) => [id, materialRect(p, id, inc)])));
   for (const [n, ws] of inc) {
-    if (ws.length !== 2) continue;
-    const [i, j] = ws as [WallId, WallId];
-    const x = p.walls[i]!;
-    const y = p.walls[j]!;
-    const lx = wallLine(p, x);
-    const ly = wallLine(p, y);
-    if (lx.axis !== ly.axis) continue;
-    const [lo, hi] = x.b === n && y.a === n ? [i, j] : y.b === n && x.a === n ? [j, i] : [null, null];
-    if (!lo || !hi) continue;
-    if (x.thickness !== y.thickness || x.exterior !== y.exterior || x.structural !== y.structural) continue;
-    const merged: Partial<Record<Side, string | null>> = {};
-    let ok = true;
-    for (const side of ['neg', 'pos'] as const) {
-      if (x[side] === y[side]) {
-        merged[side] = x[side];
-        continue;
-      }
-      const bare = x[side] === null ? i : y[side] === null ? j : null;
-      rects ??= new Map(Object.keys(p.walls).map((id) => [id, materialRect(p, id, inc)]));
-      if (!bare || !faceCovered(p, bare, side, rects)) {
-        ok = false;
-        break;
-      }
-      merged[side] = x[side] ?? y[side];
-    }
-    if (!ok) continue;
-    const keep = lx.t1 - lx.t0 >= ly.t1 - ly.t0 ? i : j;
-    const drop = keep === i ? j : i;
-    p.walls[keep] = {
-      ...p.walls[keep]!,
-      a: p.walls[lo]!.a,
-      b: p.walls[hi]!.b,
-      neg: merged.neg!,
-      pos: merged.pos!
-    };
-    moveOpenings(p, drop, keep);
-    delete p.walls[drop];
+    let pairs: [WallId, WallId][];
+    if (ws.length === 2) pairs = [ws as [WallId, WallId]];
+    else if (ws.length === 4) {
+      const h = ws.filter((id) => wallLine(p, p.walls[id]!).axis === 'h');
+      const v = ws.filter((id) => wallLine(p, p.walls[id]!).axis === 'v');
+      if (h.length !== 2 || v.length !== 2) continue;
+      pairs = [h as [WallId, WallId], v as [WallId, WallId]];
+    } else continue;
+    const merges = pairs.map(([i, j]) => mergeable(p, n, i, j, rects));
+    if (merges.some((m) => !m)) continue;
+    for (const m of merges) merge(p, m!, onMerge);
     delete p.nodes[n];
-    onMerge?.(drop, keep);
     return true;
   }
   return false;

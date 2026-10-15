@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { derive } from '../derive';
 import { emptyPlan } from '../plan';
 import { sharedWalls, size, valid, wallAt } from '../test/helpers';
+import { addOpening } from './openings';
 import { addOutline } from './outline';
 import { addRoom, deleteRoom, mergeRooms, moveRoom, nameSpace, renameRoom, setRoomSize } from './rooms';
 
@@ -99,6 +100,18 @@ describe('moveRoom', () => {
     expect(D.rooms[a.id!]!.area).toBe(9_000_000);
     expect(D.rooms[b.id!]!.area).toBe(9_000_000);
     expect(D.overlaps.reduce((s, r) => s + (r.x1 - r.x0) * (r.y1 - r.y0), 0)).toBe(2000 * 2500);
+  });
+
+  test('moving by zero next to a room crossing the Outline keeps its door whole', () => {
+    // The hall fills the Outline; R straddles the right exterior Wall, its bottom inside face level
+    // with the hall's, so R's bottom Wall crosses that exterior Wall mid-span.
+    const p0 = base();
+    const hall = nameSpace(p0, 5000, 4000, 'Hallway');
+    const r = addRoom(hall.plan, { name: 'R', w: 700, l: 600, x: 9500, y: 7200 });
+    const bottom = wallAt(r.plan, 'h', 7800, r.id!);
+    const door = addOpening(r.plan, bottom, 'door', 9500);
+    const p = valid(moveRoom(door.plan, hall.id!, 0, 0));
+    expect(Object.values(p.openings).map((o) => [o.at, o.width])).toEqual([[9500, 700]]);
   });
 
   test('a room dragged across the Outline is crossing it', () => {
