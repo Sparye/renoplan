@@ -255,15 +255,37 @@ export function nameSpace(p: Plan, x: number, y: number, name: string): { plan: 
   const outside = g.flood(g.border(), (c) => !solid[c]);
   const region = g.flood([g.cellAt(x, y)], (c) => !solid[c] && !outside[c] && !taken[c]);
 
+  // Where a parallel Wall's material covers a Wall right across (a Room's own Wall pushed into the Outline
+  // from outside), its face is no boundary anyone sees: the space is bounded by the Wall around it, and
+  // sharing the buried one would join two Rooms through it.
+  const buried = (wid: string): [number, number][] => {
+    const { line } = D.walls[wid]!;
+    const out: [number, number][] = [];
+    for (const o in D.walls) {
+      const q = D.walls[o]!;
+      if (o === wid || q.line.axis !== line.axis) continue;
+      const [lo, hi, s, e] =
+        line.axis === 'v'
+          ? [q.rect.x0, q.rect.x1, q.rect.y0, q.rect.y1]
+          : [q.rect.y0, q.rect.y1, q.rect.x0, q.rect.x1];
+      if (lo <= line.lo && hi >= line.hi) out.push([s, e]);
+    }
+    return out;
+  };
+
   const result = create(p, (d) => {
     const id = mintId(d, 'r');
     const n = name.trim() || 'Hallway';
     d.rooms[id] = { name: n, type: guessRoomType(n) };
     for (const wid of Object.keys(d.walls)) {
       const { line, rect } = D.walls[wid]!;
+      const hidden = buried(wid);
       for (const side of ['neg', 'pos'] as const) {
         if (d.walls[wid]![side] !== null) continue;
-        const spans = faceSpans(g, region, junction[line.axis], line.axis, faceOf(line, side), side, rect);
+        const spans = without(
+          faceSpans(g, region, junction[line.axis], line.axis, faceOf(line, side), side, rect),
+          hidden
+        );
         // Claims only ever extend over the free face, never over another Room's claim.
         if (spans.length) claimSpans(d, wid, side, spans, id, null);
       }
@@ -272,4 +294,17 @@ export function nameSpace(p: Plan, x: number, y: number, name: string): { plan: 
   });
   if (!result.id || !(derive(result.plan).rooms[result.id]?.area ?? 0)) return { plan: p, id: null };
   return result;
+}
+
+/** Spans minus the given intervals. */
+function without(spans: readonly [number, number][], cut: readonly [number, number][]): [number, number][] {
+  let out = [...spans];
+  for (const [s, e] of cut)
+    out = out.flatMap(([a, b]): [number, number][] => {
+      const kept: [number, number][] = [];
+      if (Math.min(b, s) > a) kept.push([a, Math.min(b, s)]);
+      if (b > Math.max(a, e)) kept.push([Math.max(a, e), b]);
+      return kept;
+    });
+  return out;
 }

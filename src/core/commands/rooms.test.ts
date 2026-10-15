@@ -257,6 +257,16 @@ describe('merge, delete, name', () => {
     expect(D.overlaps).toEqual([]);
   });
 
+  // R's left Wall lies inside the right exterior Wall (at y = 0, all but its top end): the hall is bounded
+  // by the exterior Wall, and R and the hall are on two sides of the Outline.
+  test.each([1000, 0])('naming the space beside a Room buried in the Outline from outside (y = %i)', (y) => {
+    const r = addRoom(base(), { name: 'R', w: 600, l: 600, x: 9900, y });
+    const n = nameSpace(r.plan, 5000, 4000, 'Hallway');
+    valid(n.plan);
+    expect(derive(n.plan).rooms[n.id!]!.area).toBe(9600 * 7600);
+    expect(sharedWalls(n.plan)).toEqual([]);
+  });
+
   test('a thin strip is absorbed, not Unlabelled Space', () => {
     let p = base();
     p = addRoom(p, { name: 'A', w: 4000, l: 7600, x: 200, y: 200 }).plan;
