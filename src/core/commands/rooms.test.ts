@@ -114,6 +114,17 @@ describe('moveRoom', () => {
     expect(Object.values(p.openings).map((o) => [o.at, o.width])).toEqual([[9500, 700]]);
   });
 
+  test('a Room around an island keeps its area when the island lands on a thicker Wall', () => {
+    // The hall surrounds a cupboard, so it takes a ring of its own Walls with it. Moved down until the
+    // ring's bottom face lies on the Outline's outside face, the ring fuses into that thicker Wall.
+    const p0 = base();
+    const c = addRoom(p0, { name: 'Cupboard', w: 1000, l: 1000, x: 2000, y: 2000 });
+    const hall = nameSpace(c.plan, 500, 500, 'Hallway');
+    const area = derive(hall.plan).rooms[hall.id!]!.area;
+    const p = valid(moveRoom(hall.plan, hall.id!, 0, 8000 - 3100));
+    expect(derive(p).rooms[hall.id!]!.area).toBe(area);
+  });
+
   test('a room dragged across the Outline is crossing it', () => {
     const a = addRoom(base(), { name: 'A', w: 3000, l: 3000 });
     const p = valid(moveRoom(a.plan, a.id!, -3500, 1000));
@@ -183,6 +194,14 @@ describe('merge, delete, name', () => {
     expect(derive(n.plan).unlabelled).toHaveLength(0);
     expect(derive(n.plan).rooms[n.id!]!.area).toBe((5500 - 4300) * 7600);
     expect(n.plan.rooms[n.id!]!.type).toBe('hallway');
+  });
+
+  test('naming the space around an island Room does not claim the island', () => {
+    const c = addRoom(base(), { name: 'Cupboard', w: 1000, l: 1000, x: 2000, y: 2000 });
+    const n = nameSpace(c.plan, 500, 500, 'Hallway');
+    const D = derive(valid(n.plan));
+    expect(D.rooms[n.id!]!.area).toBe(9600 * 7600 - 1200 * 1200);
+    expect(D.overlaps).toEqual([]);
   });
 
   test('a thin strip is absorbed, not Unlabelled Space', () => {

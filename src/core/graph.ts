@@ -1,12 +1,14 @@
-import { type Rect, enclosedRects } from './grid';
+import { Grid, type Rect, enclosedRects } from './grid';
 import {
   type Axis,
   type Line,
   type NodeId,
   type Plan,
+  type RoomId,
   type WallId,
   along,
   claims,
+  faceOf,
   mintId,
   point,
   wallLine
@@ -171,14 +173,49 @@ export function moveNodes(p: Plan, nodes: Iterable<NodeId>, axis: Axis, d: Mm) {
  * region depends on its own Walls alone and never on a neighbour's junction.
  */
 export function enclosedBy(p: Plan, walls: readonly WallId[]): Rect[] {
+  return enclosedRects(ownMaterial(p, walls));
+}
+
+/** The Walls' material, with junction extensions counting only Walls in the set. */
+function ownMaterial(p: Plan, walls: readonly WallId[]): Rect[] {
   const inc = new Map<NodeId, WallId[]>();
   for (const id of walls)
     for (const n of [p.walls[id]!.a, p.walls[id]!.b]) inc.set(n, [...(inc.get(n) ?? []), id]);
-  return enclosedRects(walls.map((id) => materialRect(p, id, inc)));
+  return walls.map((id) => materialRect(p, id, inc));
 }
 
 export const roomWalls = (p: Plan, room: string): WallId[] =>
   Object.keys(p.walls).filter((id) => claims(p.walls[id]!, room));
+
+/**
+ * A Room's region: the floor its own Walls enclose beside the faces it claims. A pocket its Walls enclose
+ * only behind unclaimed faces (inside an island of Walls standing in the Room) is not the Room's.
+ */
+export function roomRegion(p: Plan, room: RoomId): Rect[] {
+  const walls = roomWalls(p, room);
+  if (!walls.length) return [];
+  const solid = ownMaterial(p, walls);
+  const g = new Grid(solid);
+  const inner = g.enclosed(g.mask(solid));
+  const seeds: number[] = [];
+  for (const id of walls) {
+    const w = p.walls[id]!;
+    const l = wallLine(p, w);
+    const [lines, ts] = l.axis === 'v' ? [g.xs, g.ys] : [g.ys, g.xs];
+    for (const side of ['neg', 'pos'] as const) {
+      if (w[side] !== room) continue;
+      const k = lines.indexOf(faceOf(l, side));
+      const across = side === 'pos' ? k : k - 1;
+      for (let i = 0; i < ts.length - 1; i++) {
+        if (ts[i + 1]! <= l.t0 || ts[i]! >= l.t1) continue;
+        const c = l.axis === 'v' ? g.cell(across, i) : g.cell(i, across);
+        if (inner[c]) seeds.push(c);
+      }
+    }
+  }
+  const region = g.flood(seeds, (c) => inner[c] === 1);
+  return g.rects((c) => region[c] === 1);
+}
 
 /** Everything collinear sharing a node with a moving Wall has to move too, or it would be skewed. */
 export function collinearClosure(p: Plan, ids: WallId[]): WallId[] {

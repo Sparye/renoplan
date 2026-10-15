@@ -1,5 +1,5 @@
 import { Grid, type Rect, bounds, labelPoint, rectsArea } from './grid';
-import { enclosedBy, incidence, materialRect, roomWalls } from './graph';
+import { enclosedBy, incidence, materialRect, roomRegion } from './graph';
 import { type Line, type Plan, type RoomId, type WallId, wallLine } from './plan';
 import type { Mm } from './units';
 
@@ -69,7 +69,7 @@ function compute(p: Plan): Derived {
 
   const rooms: Record<RoomId, RoomGeom> = {};
   for (const id in p.rooms) {
-    const rects = enclosedBy(p, roomWalls(p, id));
+    const rects = roomRegion(p, id);
     rooms[id] = {
       rects,
       area: rectsArea(rects),

@@ -1,5 +1,5 @@
 import { Grid, type Rect, rectsArea } from './grid';
-import { enclosedBy, incidence, materialRect, roomWalls, splitWall } from './graph';
+import { incidence, materialRect, roomRegion, splitWall } from './graph';
 import { type Axis, type Plan, type RoomId, type Side, type WallId, faceOf, wallLine } from './plan';
 import type { Mm } from './units';
 
@@ -109,7 +109,7 @@ export function claimSpans(
  */
 export function repairClaims(p: Plan): boolean {
   const rooms = Object.keys(p.rooms);
-  const regions = new Map(rooms.map((r) => [r, enclosedBy(p, roomWalls(p, r))]));
+  const regions = new Map(rooms.map((r) => [r, roomRegion(p, r)]));
   const { g, junction } = claimGrid(p, [...regions.values()].flat());
   const masks = new Map([...regions].map(([r, rs]) => [r, g.mask(rs)]));
   const geoms = new Map(
@@ -136,7 +136,7 @@ export function repairClaims(p: Plan): boolean {
   if (!changed) return false;
   // The safety net: a repair never changes what a Room encloses.
   for (const r of rooms) {
-    const after = enclosedBy(p, roomWalls(p, r));
+    const after = roomRegion(p, r);
     if (rectsArea(after) !== rectsArea(regions.get(r)!)) throw new RepairFailed();
   }
   return true;
