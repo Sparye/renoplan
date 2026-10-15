@@ -8,21 +8,33 @@ import {
   addRoom,
   addWing,
   applyMove,
+  deleteOpening,
   deleteRoom,
   mergeRooms,
   moveRoom,
   nameSpace,
   prepareMove,
+  MIN_ROOM,
   pushWall,
   setRoomSize,
   setWallThickness
 } from './commands';
 import { rejections } from './commands/edit';
 import { derive } from './derive';
-import { Grid } from './grid';
+import { Grid, type Rect, intersects } from './grid';
 import { normalize } from './normalize';
 import { checkPlan } from './invariants';
 import { type Plan, clonePlan, emptyPlan, wallLine } from './plan';
+import {
+  type Change,
+  type Gesture,
+  type Scenario,
+  type Target,
+  applyScenario,
+  emptyScenario,
+  recordChange
+} from './scenario';
+import { type Stretch, union } from './scenario/status';
 import { snapMove } from './snap';
 
 // Random capture sessions: every command keeps the plan valid, and commands that promise not to move
@@ -93,7 +105,8 @@ const areas = (p: Plan) => Object.fromEntries(Object.entries(derive(p).rooms).ma
 const without = (o: Record<string, number>, id: string) =>
   Object.fromEntries(Object.entries(o).filter(([k]) => k !== id));
 
-function apply(p: Plan, o: Op): Plan {
+/** Applies a capture command; `checks` also asserts what the command promises (off where they are not under test). */
+function apply(p: Plan, o: Op, checks = true): Plan {
   const rooms = Object.keys(p.rooms);
   const walls = Object.keys(p.walls);
   switch (o.k) {
@@ -114,7 +127,7 @@ function apply(p: Plan, o: Op): Plan {
         q = applyMove(prep, s.dx, s.dy);
       } else q = moveRoom(p, r, o.dx, o.dy);
       // Moving a Room never changes its own area or anyone else's.
-      expect(areas(q)).toEqual(before);
+      if (checks) expect(areas(q)).toEqual(before);
       return q;
     }
     case 'push': {
@@ -126,8 +139,8 @@ function apply(p: Plan, o: Op): Plan {
       if (!r) return p;
       const q = setRoomSize(p, r, o.w, o.l);
       // Neighbours never move.
-      expect(without(areas(q), r)).toEqual(without(areas(p), r));
-      if (q !== p) {
+      if (checks) expect(without(areas(q), r)).toEqual(without(areas(p), r));
+      if (checks && q !== p) {
         const b = derive(q).rooms[r]!.bounds!;
         expect([b.x1 - b.x0, b.y1 - b.y0]).toEqual([o.w, o.l]);
       }
@@ -141,7 +154,7 @@ function apply(p: Plan, o: Op): Plan {
       const before = areas(p);
       const m = mergeRooms(p, w);
       // Without an Overlap, nothing is counted twice: the merged Room has at least both areas.
-      if (m.id && !derive(p).overlaps.length)
+      if (checks && m.id && !derive(p).overlaps.length)
         expect(derive(m.plan).rooms[m.id]!.area).toBeGreaterThanOrEqual(before[neg!]! + before[pos!]!);
       return m.plan;
     }
@@ -149,7 +162,7 @@ function apply(p: Plan, o: Op): Plan {
       const r = pick(rooms, o.i);
       if (!r) return p;
       const q = deleteRoom(p, r);
-      expect(areas(q)).toEqual(without(areas(p), r));
+      if (checks) expect(areas(q)).toEqual(without(areas(p), r));
       return q;
     }
     case 'opening': {
@@ -166,7 +179,7 @@ function apply(p: Plan, o: Op): Plan {
       );
       const before = areas(p);
       const n = nameSpace(p, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, 'Hallway');
-      if (n.id) {
+      if (checks && n.id) {
         expect(without(areas(n.plan), n.id)).toEqual(before);
         expect(derive(n.plan).rooms[n.id]!.area).toBeGreaterThanOrEqual(s.area);
       }
@@ -199,19 +212,21 @@ test('every command sequence keeps the plan valid and in normal form', () => {
   expect(rejections.count / commands).toBeLessThan(0.01);
 });
 
-test('moving a Room by nothing changes nothing the user can see', () => {
-  const seen = (p: Plan) => {
-    const D = derive(p);
-    const solid = Object.values(D.walls).map((w) => w.rect);
-    const g = new Grid(solid);
-    const m = g.mask(solid);
-    return {
-      rooms: Object.fromEntries(Object.entries(D.rooms).map(([id, r]) => [id, r.rects])),
-      walls: g.rects((c) => m[c] === 1),
-      unlabelled: D.unlabelled.map((s) => s.rects),
-      openings: Object.values(p.openings).map((o) => [o.kind, o.at, o.width])
-    };
+/** What the user can see of a plan. */
+function seen(p: Plan) {
+  const D = derive(p);
+  const solid = Object.values(D.walls).map((w) => w.rect);
+  const g = new Grid(solid);
+  const m = g.mask(solid);
+  return {
+    rooms: Object.fromEntries(Object.entries(D.rooms).map(([id, r]) => [id, r.rects])),
+    walls: g.rects((c) => m[c] === 1),
+    unlabelled: D.unlabelled.map((s) => s.rects),
+    openings: Object.values(p.openings).map((o) => [o.kind, o.at, o.width])
   };
+}
+
+test('moving a Room by nothing changes nothing the user can see', () => {
   fc.assert(
     fc.property(fc.array(op, { minLength: 1, maxLength: 20 }), fc.nat(), (ops, i) => {
       let p = emptyPlan();
@@ -220,6 +235,382 @@ test('moving a Room by nothing changes nothing the user can see', () => {
       if (!r) return;
       expect(seen(moveRoom(p, r, 0, 0))).toEqual(seen(p));
     }),
+    { numRuns: Number(process.env.RUNS ?? 300) }
+  );
+});
+
+// ---------- Scenarios (ADR 0010) ----------
+// Random capture sessions, then random Scenario Mode gestures recorded over them, then more Existing Plan
+// edits underneath: replaying never throws, stays valid, and Conflicts arise only from real edits.
+
+const gesture = fc.oneof(
+  { weight: 3, arbitrary: fc.record({ k: fc.constant('demolish' as const), i: fc.nat() }) },
+  {
+    weight: 4,
+    arbitrary: fc.record({
+      k: fc.constant('draw' as const),
+      i: fc.nat(),
+      t: fc.double({ min: 0, max: 1, noNaN: true }),
+      up: fc.boolean(),
+      // Ends on another Wall's centreline, or runs a free length.
+      to: fc.option(fc.nat(), { nil: null }),
+      len: len(300, 6000)
+    })
+  },
+  {
+    weight: 3,
+    arbitrary: fc.record({ k: fc.constant('push' as const), i: fc.nat(), d: delta, outline: fc.boolean() })
+  },
+  { weight: 1, arbitrary: fc.record({ k: fc.constant('thickness' as const), i: fc.nat(), t: len(50, 400) }) },
+  {
+    weight: 2,
+    arbitrary: fc.record({
+      k: fc.constant('opening' as const),
+      i: fc.nat(),
+      kind: fc.constantFrom('door' as const, 'window' as const, 'opening' as const),
+      t: fc.double({ min: 0, max: 1, noNaN: true })
+    })
+  },
+  { weight: 1, arbitrary: fc.record({ k: fc.constant('unopen' as const), i: fc.nat() }) },
+  {
+    weight: 1,
+    arbitrary: fc.record({
+      k: fc.constant('reopen' as const),
+      i: fc.nat(),
+      d: len(-1000, 1000),
+      w: len(300, 2000)
+    })
+  },
+  { weight: 2, arbitrary: fc.record({ k: fc.constant('name' as const), i: fc.nat() }) },
+  { weight: 1, arbitrary: fc.record({ k: fc.constant('rename' as const), i: fc.nat() }) }
+);
+type G = typeof gesture extends fc.Arbitrary<infer T> ? T : never;
+
+/** The point to name an Unlabelled Space at: the middle of its widest rectangle. */
+function spacePoint(p: Plan, i: number) {
+  const s = pick(derive(p).unlabelled, i);
+  if (!s) return null;
+  const r = s.rects.reduce((a, b) =>
+    Math.min(b.x1 - b.x0, b.y1 - b.y0) > Math.min(a.x1 - a.x0, a.y1 - a.y0) ? b : a
+  );
+  return { x: (r.x0 + r.x1) / 2, y: (r.y0 + r.y1) / 2 };
+}
+
+function toGesture(p: Plan, g: G): Gesture | null {
+  const walls = Object.keys(p.walls);
+  const openings = Object.keys(p.openings);
+  switch (g.k) {
+    case 'demolish': {
+      const w = pick(walls, g.i);
+      return w ? { op: 'demolishWall', wall: w } : null;
+    }
+    case 'draw': {
+      const w = pick(walls, g.i);
+      if (!w) return null;
+      const l = wallLine(p, p.walls[w]!);
+      const t = Math.round(l.t0 + g.t * (l.t1 - l.t0));
+      const sign = g.up ? -1 : 1;
+      let end = l.c + sign * g.len;
+      if (g.to !== null) {
+        // The nearest parallel centreline on that side whose span covers t.
+        const across = walls
+          .map((id) => wallLine(p, p.walls[id]!))
+          .filter((m) => m.axis === l.axis && m.t0 <= t && t <= m.t1 && sign * (m.c - l.c) > 0)
+          .map((m) => m.c);
+        const target = pick(across, g.to);
+        if (target !== undefined) end = target;
+      }
+      const at = (c: number) => (l.axis === 'h' ? { x: t, y: c } : { x: c, y: t });
+      return { op: 'drawWall', a: at(l.c), b: at(end) };
+    }
+    case 'push': {
+      const w = pick(walls, g.i);
+      return w ? { op: 'pushWall', wall: w, delta: g.d, outline: g.outline } : null;
+    }
+    case 'thickness': {
+      const w = pick(walls, g.i);
+      return w ? { op: 'setThickness', wall: w, thickness: g.t } : null;
+    }
+    case 'opening': {
+      const w = pick(walls, g.i);
+      if (!w) return null;
+      const l = wallLine(p, p.walls[w]!);
+      return { op: 'addOpening', wall: w, kind: g.kind, center: l.t0 + g.t * (l.t1 - l.t0) };
+    }
+    case 'unopen': {
+      const o = pick(openings, g.i);
+      return o ? { op: 'removeOpening', opening: o } : null;
+    }
+    case 'reopen': {
+      const o = pick(openings, g.i);
+      return o
+        ? { op: 'modifyOpening', opening: o, patch: { at: p.openings[o]!.at + g.d, width: g.w } }
+        : null;
+    }
+    case 'name': {
+      const at = spacePoint(p, g.i);
+      return at ? { op: 'nameSpace', ...at, name: 'Studio' } : null;
+    }
+    case 'rename': {
+      const r = pick(Object.keys(p.rooms), g.i);
+      return r ? { op: 'renameRoom', room: r, name: `Room ${g.i}` } : null;
+    }
+  }
+}
+
+/** An Existing Plan session. What capture commands promise is the capture properties' business, not these. */
+function capture(ops: readonly Op[], from = emptyPlan()): Plan {
+  let p = from;
+  for (const o of ops)
+    try {
+      p = apply(p, o, false);
+    } catch {
+      // A capture command that throws is the capture properties' to report; this session goes on without it.
+    }
+  return p;
+}
+
+/** How many Changes of each kind the sessions recorded, so a generator that never lands one shows up. */
+const recorded = new Map<string, number>();
+
+/** Records the gestures that do something, checking the Scenario after each one. */
+function record(existing: Plan, gestures: readonly G[]): Scenario {
+  let s = emptyScenario('s1', 'Option');
+  for (const g of gestures) {
+    const ge = toGesture(applyScenario(existing, s).plan, g);
+    const r = ge && recordChange(existing, s, ge);
+    if (!r) continue;
+    s = r.scenario;
+    recorded.set(ge.op, (recorded.get(ge.op) ?? 0) + 1);
+    const out = applyScenario(existing, s);
+    // A recorded Change is never born a Conflict.
+    expect(out.conflicts).toEqual([]);
+    sound(out.plan, ge);
+  }
+  return s;
+}
+
+function sound(p: Plan, why: unknown) {
+  const errs = checkPlan(p);
+  if (errs.length) throw new Error(`${JSON.stringify(why)} → ${errs.join('; ')}`);
+  expect(normalize(clonePlan(p))).toEqual(p);
+}
+
+/** Retained + Demolished covers the Existing Plan's Walls; Retained + New covers the Scenario's. */
+function statusesAddUp(existing: Plan, r: ReturnType<typeof applyScenario>) {
+  const by = (p: Plan) => {
+    const m = new Map<string, Stretch[]>();
+    for (const w of Object.values(p.walls)) {
+      const l = wallLine(p, w);
+      const k = `${l.axis}|${l.c}|${w.thickness}`;
+      m.set(k, [...(m.get(k) ?? []), { t0: l.t0, t1: l.t1 }]);
+    }
+    return m;
+  };
+  const length = (s: Stretch[]) => union(s).reduce((n, x) => n + x.t1 - x.t0, 0);
+  const keyed = (p: Plan, ids: Record<string, Stretch[]>) => {
+    const m = new Map<string, Stretch[]>();
+    for (const [id, s] of Object.entries(ids)) {
+      const l = wallLine(p, p.walls[id]!);
+      const k = `${l.axis}|${l.c}|${p.walls[id]!.thickness}`;
+      m.set(k, [...(m.get(k) ?? []), ...s]);
+    }
+    return m;
+  };
+  const only = (status: string) =>
+    keyed(
+      r.plan,
+      Object.fromEntries(
+        Object.entries(r.statuses.walls).map(([id, s]) => [id, s.filter((x) => x.status === status)])
+      )
+    );
+  const retained = only('retained');
+  const added = only('new');
+  const gone = keyed(existing, r.statuses.demolished);
+  for (const [k, s] of by(existing))
+    expect(length(retained.get(k) ?? []) + length(gone.get(k) ?? [])).toBe(length(s));
+  for (const [k, s] of by(r.plan))
+    expect(length(retained.get(k) ?? []) + length(added.get(k) ?? [])).toBe(length(s));
+}
+
+test('a Scenario replays soundly over any later Existing Plan edits', () => {
+  fc.assert(
+    fc.property(
+      fc.array(op, { minLength: 1, maxLength: 20 }),
+      fc.array(gesture, { minLength: 1, maxLength: 10 }),
+      fc.array(op, { maxLength: 10 }),
+      (before, gestures, after) => {
+        const e0 = capture(before);
+        const s = record(e0, gestures);
+        // Replaying from scratch, as after reopening the Project, gives the same plan.
+        const again = applyScenario(clonePlan(e0), structuredClone(s));
+        expect(again.plan).toEqual(applyScenario(e0, s).plan);
+        statusesAddUp(e0, again);
+
+        const e1 = capture(after, e0);
+        const r = applyScenario(e1, s);
+        sound(r.plan, { after });
+        statusesAddUp(e1, r);
+        const ids = s.changes.map((c) => c.id);
+        expect(new Set(r.conflicts.map((c) => c.change)).size).toBe(r.conflicts.length);
+        for (const c of r.conflicts) expect(ids).toContain(c.change);
+      }
+    ),
+    { numRuns: Number(process.env.RUNS ?? 300) }
+  );
+  // Every kind of gesture was recorded somewhere.
+  expect([...recorded.keys()].sort()).toEqual(
+    [
+      'addOpening',
+      'demolishWall',
+      'drawWall',
+      'modifyOpening',
+      'nameSpace',
+      'pushWall',
+      'removeOpening',
+      'renameRoom',
+      'setThickness'
+    ].sort()
+  );
+  if (process.env.STATS) console.log(Object.fromEntries(recorded));
+});
+
+/** Existing Plan edits that touch nothing a Scenario points at, or only nudge it. */
+const harmless = fc.oneof(
+  fc.record({ k: fc.constant('still' as const), i: fc.nat() }),
+  fc.record({ k: fc.constant('room' as const), w: len(600, 4000), l: len(600, 4000) }),
+  fc.record({
+    k: fc.constant('opening' as const),
+    i: fc.nat(),
+    kind: fc.constantFrom('door' as const, 'window' as const),
+    t: fc.double({ min: 0, max: 1, noNaN: true })
+  }),
+  fc.record({ k: fc.constant('nudge' as const), i: fc.nat(), d: fc.constantFrom(-50, 50) })
+);
+
+test('harmless Existing Plan edits never make a Change conflict', () => {
+  fc.assert(
+    fc.property(
+      fc.array(op, { minLength: 1, maxLength: 20 }),
+      fc.array(gesture, { minLength: 1, maxLength: 10 }),
+      harmless,
+      (before, gestures, h) => {
+        const e0 = capture(before);
+        const s = record(e0, gestures);
+        // Every Wall the Scenario has at any step of its replay, and those of them it drew.
+        const steps = s.changes.map(
+          (_, k) => applyScenario(e0, { ...s, changes: s.changes.slice(0, k + 1) }).plan
+        );
+        const all = steps.flatMap((q) => Object.values(derive(q).walls).map((w) => w.rect));
+        const drawn = steps.flatMap((q) =>
+          Object.keys(q.walls)
+            .filter((id) => q.walls[id]!.drawn)
+            .map((id) => derive(q).walls[id]!.rect)
+        );
+        const clear = (rs: Rect[], of: Rect[], margin: number) =>
+          !rs.some((r) => {
+            const zone = { x0: r.x0 - margin, y0: r.y0 - margin, x1: r.x1 + margin, y1: r.y1 + margin };
+            return of.some((w) => intersects(w, zone));
+          });
+        // Moving a Room against an L-shaped Outline can still change it (open capture bugs, ADR 0010).
+        const winged = (derive(e0).outline?.inside.length ?? 0) > 1;
+        let e1 = e0;
+        if ((h.k === 'still' || h.k === 'nudge') && winged) return;
+        if (h.k === 'still') {
+          const r = pick(Object.keys(e0.rooms), h.i);
+          if (r) e1 = moveRoom(e0, r, 0, 0);
+          // Capture's known move-by-nothing bugs (ADR 0010, deferred) are not harmless edits.
+          if (JSON.stringify(seen(e1)) !== JSON.stringify(seen(e0))) return;
+        } else if (h.k === 'room') {
+          const a = addRoom(e0, { name: 'Shed', w: h.w, l: h.l });
+          // A new Room is parked clear of the Existing Plan, but a Scenario may have drawn out there: the
+          // edit is harmless only if the Room lands clear of every Wall the Scenario has at any step.
+          if (!a.id || !clear([derive(a.plan).rooms[a.id]!.bounds!], all, 300)) return;
+          e1 = a.plan;
+        } else if (h.k === 'opening') {
+          const w = pick(Object.keys(e0.walls), h.i);
+          if (w) {
+            const l = wallLine(e0, e0.walls[w]!);
+            e1 = addOpening(e0, w, h.kind, l.t0 + h.t * (l.t1 - l.t0)).plan;
+          }
+        } else {
+          // A measurement correction: an interior Wall bounding a Room moves a little...
+          const w = pick(
+            Object.keys(e0.walls).filter(
+              (id) => !e0.walls[id]!.exterior && (e0.walls[id]!.neg || e0.walls[id]!.pos)
+            ),
+            h.i
+          );
+          if (!w) return;
+          e1 = pushWall(e0, w, h.d);
+          // ... with the same Rooms on its faces (in an Overlap, a nudge can change which Rooms meet).
+          const { neg, pos } = e0.walls[w]!;
+          const l = wallLine(e0, e0.walls[w]!);
+          const kept = Object.values(e1.walls).some((x) => {
+            const m = wallLine(e1, x);
+            return (
+              x.neg === neg &&
+              x.pos === pos &&
+              m.axis === l.axis &&
+              m.c === l.c + h.d &&
+              Math.min(m.t1, l.t1) > Math.max(m.t0, l.t0)
+            );
+          });
+          if (!kept) return;
+          // Unless, replayed in the Scenario, the material it moves runs into Walls the Scenario drew: their
+          // ends stay where they were drawn (ADR 0010, deferred).
+          const material = (q: Plan) => new Set(seen(q).walls.map((r) => JSON.stringify(r)));
+          // Nor may it close up an Unlabelled Space the Scenario has (a strip nudged below SLIVER is gone), or
+          // bring a Room to the minimum size, where a Scenario's push no longer fits.
+          const tight = (q: Plan) =>
+            Object.values(derive(q).rooms).some(
+              (g) =>
+                g.bounds && Math.min(g.bounds.x1 - g.bounds.x0, g.bounds.y1 - g.bounds.y0) < MIN_ROOM + 100
+            );
+          const moved: Rect[] = [];
+          for (let k = 0; k < s.changes.length; k++) {
+            const prefix = { ...s, changes: s.changes.slice(0, k + 1) };
+            const [q0, q1] = [applyScenario(e0, prefix).plan, applyScenario(e1, prefix).plan];
+            if (derive(q0).unlabelled.length !== derive(q1).unlabelled.length || tight(q1)) return;
+            const [m0, m1] = [material(q0), material(q1)];
+            for (const r of [...m0, ...m1]) if (!m0.has(r) || !m1.has(r)) moved.push(JSON.parse(r) as Rect);
+          }
+          if (!clear(moved, drawn, 100)) return;
+        }
+        const r = applyScenario(e1, s);
+        sound(r.plan, h);
+        expect(r.conflicts).toEqual([]);
+      }
+    ),
+    { numRuns: Number(process.env.RUNS ?? 300) }
+  );
+});
+
+test('a Change whose Existing Plan Room or Opening is deleted is a Conflict', () => {
+  fc.assert(
+    fc.property(
+      fc.array(op, { minLength: 1, maxLength: 20 }),
+      fc.array(gesture, { minLength: 1, maxLength: 10 }),
+      fc.nat(),
+      (before, gestures, i) => {
+        const e0 = capture(before);
+        const s = record(e0, gestures);
+        const target = (t: Target) => (typeof t === 'string' ? t : null);
+        const aimed: { c: Change; room?: string; opening?: string }[] = [];
+        for (const c of s.changes) {
+          if (c.op === 'renameRoom' && target(c.room)) aimed.push({ c, room: target(c.room)! });
+          if ((c.op === 'removeOpening' || c.op === 'modifyOpening') && target(c.opening))
+            aimed.push({ c, opening: target(c.opening)! });
+        }
+        const a = pick(aimed, i);
+        if (!a) return;
+        const e1 = a.room ? deleteRoom(e0, a.room) : deleteOpening(e0, a.opening!);
+        if (e1 === e0) return;
+        const r = applyScenario(e1, s);
+        sound(r.plan, a);
+        expect(r.conflicts).toContainEqual({ change: a.c.id, reason: 'vanished' });
+      }
+    ),
     { numRuns: Number(process.env.RUNS ?? 300) }
   );
 });

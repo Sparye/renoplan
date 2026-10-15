@@ -30,6 +30,8 @@ export interface Wall {
   exterior: boolean;
   /** Structural Mark. */
   structural: boolean;
+  /** Drawn on its own with Draw Wall, so it stays even where it bounds no Room (ADR 0010). */
+  drawn: boolean;
   /** The Room whose inside face is this Wall's left/top face, if any. */
   neg: RoomId | null;
   /** The Room whose inside face is this Wall's right/bottom face, if any. */

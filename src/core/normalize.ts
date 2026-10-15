@@ -157,6 +157,8 @@ export function applyFusion(p: Plan, fu: Fusion) {
   const own = isolate(p, fu.own, fu.s0, fu.s1);
   const host = isolate(p, fu.host, fu.s0, fu.s1);
   p.walls[host]![fu.side] = room;
+  // A drawn Wall stays drawn: the host now stands where the user drew it.
+  p.walls[host]!.drawn ||= p.walls[own]!.drawn;
   moveOpenings(p, own, host);
   const axis = wallLine(p, p.walls[own]!).axis;
   // The Room's side Walls re-end on the host's centreline. A stub of the Room's already reaching the
@@ -203,6 +205,7 @@ function dedupe(p: Plan): boolean {
     k.pos ??= w.pos;
     k.exterior ||= w.exterior;
     k.structural ||= w.structural;
+    k.drawn ||= w.drawn;
     moveOpenings(p, id, keep);
     delete p.walls[id];
     changed = true;
@@ -246,7 +249,13 @@ function mergeable(p: Plan, n: NodeId, i: WallId, j: WallId, rects: () => Map<Wa
   if (wallLine(p, x).axis !== wallLine(p, y).axis) return null;
   const [lo, hi] = x.b === n && y.a === n ? [i, j] : y.b === n && x.a === n ? [j, i] : [null, null];
   if (!lo || !hi) return null;
-  if (x.thickness !== y.thickness || x.exterior !== y.exterior || x.structural !== y.structural) return null;
+  if (
+    x.thickness !== y.thickness ||
+    x.exterior !== y.exterior ||
+    x.structural !== y.structural ||
+    x.drawn !== y.drawn
+  )
+    return null;
   const merged: Record<Side, string | null> = { neg: null, pos: null };
   for (const side of ['neg', 'pos'] as const) {
     if (x[side] === y[side]) {
@@ -322,14 +331,14 @@ function fitOpenings(p: Plan) {
 }
 
 /**
- * During capture an interior Wall that bounds no Room is an artefact (a detached copy whose claim was
- * trimmed away): no Room or Outline uses it, so it goes. Revisit when Scenario Mode gets Draw Wall.
+ * An interior Wall that bounds no Room is an artefact (a detached copy whose claim was trimmed away): no
+ * Room or Outline uses it, so it goes — unless the user drew it on its own (ADR 0010).
  */
 function dropBare(p: Plan): boolean {
   let changed = false;
   for (const id of Object.keys(p.walls)) {
     const w = p.walls[id]!;
-    if (w.exterior || w.neg || w.pos) continue;
+    if (w.exterior || w.drawn || w.neg || w.pos) continue;
     deleteWall(p, id);
     changed = true;
   }

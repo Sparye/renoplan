@@ -81,6 +81,7 @@ export function rectWalls(p: Plan, r: Rect, t: Mm | SideThickness, room: RoomId 
       thickness,
       exterior,
       structural: false,
+      drawn: false,
       neg: side === 'neg' ? room : null,
       pos: side === 'pos' ? room : null
     };
@@ -201,7 +202,7 @@ export function setRoomType(p: Plan, room: RoomId, type: RoomType): Plan {
   });
 }
 
-/** Removes a Room. Its own Walls go; Walls it shares stay with the neighbour. */
+/** Removes a Room. Its own Walls go; Walls it shares stay with the neighbour, the Outline, or as drawn. */
 export function deleteRoom(p: Plan, room: RoomId): Plan {
   if (!p.rooms[room]) return p;
   return edit(p, (d) => {
@@ -210,7 +211,7 @@ export function deleteRoom(p: Plan, room: RoomId): Plan {
       const side = sideOf(w, room);
       if (!side) continue;
       const other = side === 'neg' ? w.pos : w.neg;
-      if (!other && !w.exterior) deleteWall(d, id);
+      if (!other && !w.exterior && !w.drawn) deleteWall(d, id);
       else w[side] = null;
     }
     delete d.rooms[room];
@@ -218,10 +219,11 @@ export function deleteRoom(p: Plan, room: RoomId): Plan {
 }
 
 /**
- * Removes the Shared Wall between two Rooms, merging them. The larger Room keeps its name. Rooms on two
+ * Removes the Shared Wall between two Rooms, merging them. The larger Room keeps its name, unless `prefer`
+ * names one of the two (a Scenario replaying a merge keeps the Room it kept when recorded). Rooms on two
  * sides of the Outline never merge.
  */
-export function mergeRooms(p: Plan, wallId: WallId): { plan: Plan; id: RoomId | null } {
+export function mergeRooms(p: Plan, wallId: WallId, prefer?: RoomId): { plan: Plan; id: RoomId | null } {
   const w = p.walls[wallId];
   if (!w?.neg || !w.pos || w.neg === w.pos) return { plan: p, id: null };
   const pair = new Set([w.neg, w.pos]);
@@ -229,7 +231,11 @@ export function mergeRooms(p: Plan, wallId: WallId): { plan: Plan; id: RoomId | 
   if (between.some((x) => x.exterior)) return { plan: p, id: null };
   const rooms = derive(p).rooms;
   const [keep, drop] =
-    (rooms[w.neg]?.area ?? 0) >= (rooms[w.pos]?.area ?? 0) ? [w.neg, w.pos] : [w.pos, w.neg];
+    prefer === w.pos
+      ? [w.pos, w.neg]
+      : prefer === w.neg || (rooms[w.neg]?.area ?? 0) >= (rooms[w.pos]?.area ?? 0)
+        ? [w.neg, w.pos]
+        : [w.pos, w.neg];
   return create(p, (d) => {
     for (const id of Object.keys(d.walls)) {
       const x = d.walls[id]!;
@@ -243,6 +249,23 @@ export function mergeRooms(p: Plan, wallId: WallId): { plan: Plan; id: RoomId | 
     delete d.rooms[drop];
     return keep;
   });
+}
+
+/** The parts of the spans a outside the spans b. */
+function without(a: readonly [number, number][], b: readonly [number, number][]): [number, number][] {
+  let out = [...a];
+  for (const [b0, b1] of b)
+    out = out.flatMap(([a0, a1]): [number, number][] =>
+      b1 <= a0 || b0 >= a1
+        ? [[a0, a1]]
+        : (
+            [
+              [a0, b0],
+              [b1, a1]
+            ] as [number, number][]
+          ).filter(([x, y]) => y > x)
+    );
+  return out;
 }
 
 /** Turns the Unlabelled Space at a point into a Room by claiming the free Wall faces around it. */
@@ -280,31 +303,22 @@ export function nameSpace(p: Plan, x: number, y: number, name: string): { plan: 
     for (const wid of Object.keys(d.walls)) {
       const { line, rect } = D.walls[wid]!;
       const hidden = buried(wid);
-      for (const side of ['neg', 'pos'] as const) {
-        if (d.walls[wid]![side] !== null) continue;
-        const spans = without(
-          faceSpans(g, region, junction[line.axis], line.axis, faceOf(line, side), side, rect),
-          hidden
-        );
+      const spans = (side: Side) =>
         // Claims only ever extend over the free face, never over another Room's claim.
-        if (spans.length) claimSpans(d, wid, side, spans, id, null);
-      }
+        d.walls[wid]![side] !== null
+          ? []
+          : without(
+              faceSpans(g, region, junction[line.axis], line.axis, faceOf(line, side), side, rect),
+              hidden
+            );
+      const neg = spans('neg');
+      const pos = spans('pos');
+      // Where the space lies on both faces, the Wall stands inside it (a drawn stub): neither face bounds it.
+      if (neg.length) claimSpans(d, wid, 'neg', without(neg, pos), id, null);
+      if (pos.length) claimSpans(d, wid, 'pos', without(pos, neg), id, null);
     }
     return id;
   });
   if (!result.id || !(derive(result.plan).rooms[result.id]?.area ?? 0)) return { plan: p, id: null };
   return result;
-}
-
-/** Spans minus the given intervals. */
-function without(spans: readonly [number, number][], cut: readonly [number, number][]): [number, number][] {
-  let out = [...spans];
-  for (const [s, e] of cut)
-    out = out.flatMap(([a, b]): [number, number][] => {
-      const kept: [number, number][] = [];
-      if (Math.min(b, s) > a) kept.push([a, Math.min(b, s)]);
-      if (b > Math.max(a, e)) kept.push([Math.max(a, e), b]);
-      return kept;
-    });
-  return out;
 }

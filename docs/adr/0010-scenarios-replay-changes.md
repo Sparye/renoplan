@@ -48,7 +48,4 @@ Deferred:
 - Demolishing an exterior Wall (for an Extension), or a Room's Wall onto Unlabelled Space, is refused by the soundness check. Revisit with Extensions.
 - The Show Changes toggle is UI state and is not stored.
 - Coalescing consecutive Changes to the same element (e.g. dragging an Opening twice), and the Conflict-resolution UI.
-- Pre-existing capture bugs found by the property tests. The fixes belong to capture, not this ADR. Together they fail one of the two capture properties in roughly 4 of 10 full 20 000-run executions, on the parent branch as much as here. The first two are pinned in `rooms.test.ts` as tests marked failing until fixed.
-  - A thickened exterior corner stub loses its claim when a Room is detached and fused back, so moving the Room by nothing grows it 150 × 100 mm into the corner.
-  - After a top wing and a push of the Outline, snapping a named space 1 mm changes its area by 100 mm².
-  - Similar area drift after a right wing (moving a named space by nothing changes its area by 2 500 mm²), and `pushWall` throwing "wall is not orthogonal" after two right wings.
+- Pre-existing capture bugs found by the property tests, being fixed on the parent branch. Moving a Room against an L-shaped Outline by nothing, or with snapping, can change its area by 0.005–0.01 m². One case is pinned in `rooms.test.ts` as a test marked failing until fixed: after a top wing and a push of the Outline, snapping a named space 1 mm changes its area by 100 mm². Also seen: `pushWall` throwing "wall is not orthogonal" after two right wings.

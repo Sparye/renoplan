@@ -4,8 +4,8 @@ import { emptyPlan, wallLine } from '../plan';
 import { sharedWalls, size, valid, wallAt } from '../test/helpers';
 import { addOpening } from './openings';
 import { addOutline, addWing } from './outline';
-import { pushWall, setWallThickness } from './walls';
 import { addRoom, deleteRoom, mergeRooms, moveRoom, nameSpace, renameRoom, setRoomSize } from './rooms';
+import { pushWall, setWallThickness } from './walls';
 
 const base = () => valid(addOutline(emptyPlan(), 10000, 8000, { x: 0, y: 0 }));
 
@@ -73,6 +73,22 @@ describe('snapping two rooms one interior wall apart', () => {
 });
 
 describe('moveRoom', () => {
+  // Known bug, found by the Scenario property tests (ADR 0010, deferred): after a top wing and a push of
+  // the Outline, snapping the named space 1 mm changes its area by 100 mm². Marked as failing until fixed.
+  test.fails('moving a Room keeps its area after a wing and an Outline push (area drifts on snap)', () => {
+    let p = addWing(addOutline(emptyPlan(), 6000, 5000), 'top', 1500, 1500);
+    const walls = Object.keys(p.walls);
+    p = pushWall(p, walls[1463753573 % walls.length]!, -1500);
+    const s = derive(p).unlabelled[0]!;
+    const r = s.rects.reduce((a, b) =>
+      Math.min(b.x1 - b.x0, b.y1 - b.y0) > Math.min(a.x1 - a.x0, a.y1 - a.y0) ? b : a
+    );
+    const n = nameSpace(p, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, 'Hallway');
+    p = valid(n.plan);
+    const q = valid(moveRoom(p, n.id!, 0, -1));
+    expect(derive(q).rooms[n.id!]!.area).toBe(derive(p).rooms[n.id!]!.area);
+  });
+
   test('detaches from neighbours, who keep the Shared Wall', () => {
     const a = addRoom(emptyPlan(), { name: 'A', w: 3000, l: 4000, x: 0, y: 0 });
     const b = addRoom(a.plan, { name: 'B', w: 2000, l: 4000, x: 3100, y: 0 });
@@ -220,6 +236,17 @@ describe('merge, delete, name', () => {
     const g = derive(m.plan).rooms[a]!;
     expect(g.area).toBe(16_000_000 + 2_000 * 2_000 + 100 * 2000);
     expect(g.rectangular).toBe(false);
+  });
+
+  test('merging can keep the smaller Room when asked, and ignores a Room not in the pair', () => {
+    const { p, a, b } = pair();
+    const wall = wallAt(p, 'v', 4000, a);
+    const m = mergeRooms(p, wall, b);
+    valid(m.plan);
+    expect(m.id).toBe(b);
+    expect(m.plan.rooms[a]).toBeUndefined();
+    expect(m.plan.rooms[b]!.name).toBe('Nook');
+    expect(mergeRooms(p, wall, 'r999').id).toBe(a);
   });
 
   test('deleting a room leaves its neighbour whole', () => {

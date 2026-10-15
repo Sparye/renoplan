@@ -45,6 +45,7 @@ export function detachFrom(p: Plan, room: RoomId, walls: readonly WallId[]): Map
       thickness: t,
       exterior: false,
       structural: false,
+      drawn: false,
       neg: side === 'neg' ? room : null,
       pos: side === 'pos' ? room : null
     };
@@ -109,14 +110,20 @@ export function isolateNodes(p: Plan, room: RoomId) {
   }
 }
 
+/**
+ * Whether a Room shares a Wall it claims: with a Room on the other face, the Outline, or the user who drew
+ * it. A Room never owns such a Wall, so it detaches from it rather than moving or removing it.
+ */
+export function sharesWall(p: Plan, id: WallId, room: RoomId): boolean {
+  const w = p.walls[id]!;
+  const side = sideOf(w, room);
+  if (!side) return false;
+  return w.exterior || w.drawn || w[side === 'neg' ? 'pos' : 'neg'] !== null;
+}
+
 /** Detaches a Room from every Wall it shares, so it can move or resize without moving its neighbours. */
 export function detachRoom(p: Plan, room: RoomId) {
-  const shared = Object.keys(p.walls).filter((id) => {
-    const w = p.walls[id]!;
-    const side = sideOf(w, room);
-    if (!side) return false;
-    return w.exterior || w[side === 'neg' ? 'pos' : 'neg'] !== null;
-  });
+  const shared = Object.keys(p.walls).filter((id) => sharesWall(p, id, room));
   detachFrom(p, room, shared);
   mergeNodes(p);
   isolateNodes(p, room);

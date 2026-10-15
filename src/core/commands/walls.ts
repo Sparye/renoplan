@@ -1,5 +1,5 @@
 import { derive } from '../derive';
-import { collinearClosure, incidence, moveNodes, runOf } from '../graph';
+import { addNode, collinearClosure, incidence, moveNodes, runOf } from '../graph';
 import { mergeCollinear, mergeNodes } from '../normalize';
 import {
   type Axis,
@@ -9,13 +9,13 @@ import {
   type WallId,
   clonePlan,
   faceOffsets,
+  mintId,
   point,
-  sideOf,
   wallLine
 } from '../plan';
 import type { Mm } from '../units';
-import { detachFrom, isolateNodes } from './detach';
-import { edit, finish } from './edit';
+import { detachFrom, isolateNodes, sharesWall } from './detach';
+import { create, edit, finish } from './edit';
 
 /** No Room's inside dimension is pushed below this. A degenerate-room guard, not a collision clamp. */
 export const MIN_ROOM: Mm = 300;
@@ -47,11 +47,7 @@ export function preparePush(p: Plan, wallId: WallId, opts: { outline?: boolean }
   const bare = run0.filter((id) => !d.walls[id]!.exterior && !d.walls[id]!.neg && !d.walls[id]!.pos);
   const copies = new Map<WallId, WallId[]>();
   for (const room of rooms) {
-    const shared = Object.keys(d.walls).filter((id) => {
-      const w = d.walls[id]!;
-      const side = sideOf(w, room);
-      return side !== null && (w.exterior || w[side === 'neg' ? 'pos' : 'neg'] !== null);
-    });
+    const shared = Object.keys(d.walls).filter((id) => sharesWall(d, id, room));
     for (const [orig, copy] of detachFrom(d, room, shared))
       copies.set(orig, [...(copies.get(orig) ?? []), copy]);
   }
@@ -71,9 +67,11 @@ export function preparePush(p: Plan, wallId: WallId, opts: { outline?: boolean }
       if (opts.outline || !rooms.size) run.add(id);
     } else if (!claimsNone(w) || bare.includes(id)) run.add(id);
     else {
-      // A Shared Wall whose Rooms have all taken copies: its Openings go with the first copy.
+      // A Shared Wall whose Rooms have all taken copies: its Openings (and whether it was drawn) go with
+      // the first copy.
       const first = live(copies.get(id0)![0]!);
       for (const o of Object.values(d.openings)) if (o.wall === id) o.wall = first;
+      d.walls[first]!.drawn ||= w.drawn;
       delete d.walls[id];
     }
   }
@@ -178,6 +176,63 @@ export function setStructural(p: Plan, wallId: WallId, structural: boolean): Pla
   if (!p.walls[wallId] || p.walls[wallId].structural === structural) return p;
   return edit(p, (d) => {
     d.walls[wallId]!.structural = structural;
+  });
+}
+
+/**
+ * Draw Wall: an interior Wall along a centreline from a to b, bounding no Room yet. It is drawn, so normal
+ * form keeps it; where an end sits on another Wall's centreline the two join in a T-junction. It may cross
+ * other Walls, but only adds Wall where there is none: the stretches lying along a parallel Wall's material
+ * are left out. Returns the longest piece drawn.
+ */
+export function drawWall(
+  p: Plan,
+  a: { x: Mm; y: Mm },
+  b: { x: Mm; y: Mm },
+  thickness: Mm = p.defaults.interior
+): { plan: Plan; id: WallId | null } {
+  const [ax, ay, bx, by] = [a.x, a.y, b.x, b.y].map(Math.round) as [Mm, Mm, Mm, Mm];
+  const t = Math.round(thickness);
+  if ((ax !== bx && ay !== by) || (ax === bx && ay === by) || !(t >= 10)) return { plan: p, id: null };
+  const axis: Axis = ay === by ? 'h' : 'v';
+  const c = axis === 'h' ? ay : ax;
+  const [fl, ce] = faceOffsets(t);
+  let free: [Mm, Mm][] = [
+    axis === 'h' ? [Math.min(ax, bx), Math.max(ax, bx)] : [Math.min(ay, by), Math.max(ay, by)]
+  ];
+  for (const w of Object.values(p.walls)) {
+    const l = wallLine(p, w);
+    if (l.axis !== axis || Math.min(l.hi, c + ce) <= Math.max(l.lo, c - fl)) continue;
+    free = free.flatMap(([s0, s1]): [Mm, Mm][] =>
+      l.t1 <= s0 || l.t0 >= s1
+        ? [[s0, s1]]
+        : (
+            [
+              [s0, l.t0],
+              [l.t1, s1]
+            ] as [Mm, Mm][]
+          ).filter(([x, y]) => y > x)
+    );
+  }
+  if (!free.length) return { plan: p, id: null };
+  return create(p, (d) => {
+    let longest: [WallId, Mm] | null = null;
+    for (const [s0, s1] of free) {
+      const id = mintId(d, 'w');
+      const [pa, pb] = [point(axis, s0, c), point(axis, s1, c)];
+      d.walls[id] = {
+        a: addNode(d, pa.x, pa.y),
+        b: addNode(d, pb.x, pb.y),
+        thickness: t,
+        exterior: false,
+        structural: false,
+        drawn: true,
+        neg: null,
+        pos: null
+      };
+      if (!longest || s1 - s0 > longest[1]) longest = [id, s1 - s0];
+    }
+    return longest![0];
   });
 }
 

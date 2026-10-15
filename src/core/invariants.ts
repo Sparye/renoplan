@@ -52,6 +52,7 @@ export function checkPlan(p: Plan): string[] {
       x!.thickness === y!.thickness &&
       x!.exterior === y!.exterior &&
       x!.structural === y!.structural &&
+      x!.drawn === y!.drawn &&
       x!.neg === y!.neg &&
       x!.pos === y!.pos
     )
