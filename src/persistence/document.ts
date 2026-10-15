@@ -1,16 +1,16 @@
 import { Result, Schema } from 'effect';
-import { type Plan, checkPlan, normalizePlan } from '@/core';
+import { type Plan, type Scenario, checkPlan, normalizePlan } from '@/core';
 
 // The versioned document format (ADR 0006): what Save writes, Open reads, and browser storage holds.
 // Every version stays decodable: an older document is migrated step by step to the current one.
 
 export const FORMAT = 'renoplan';
-export const VERSION = 1;
+export const VERSION = 2;
 
 const Mm = Schema.Int;
 const Id = Schema.String;
 
-const PlanV1 = Schema.Struct({
+const PlanSchema = Schema.Struct({
   nodes: Schema.Record(Schema.String, Schema.Struct({ x: Mm, y: Mm })),
   walls: Schema.Record(
     Schema.String,
@@ -20,6 +20,7 @@ const PlanV1 = Schema.Struct({
       thickness: Mm.check(Schema.isGreaterThanOrEqualTo(1)),
       exterior: Schema.Boolean,
       structural: Schema.Boolean,
+      drawn: Schema.Boolean,
       neg: Schema.NullOr(Id),
       pos: Schema.NullOr(Id)
     })
@@ -46,15 +47,59 @@ const PlanV1 = Schema.Struct({
   nextId: Mm
 });
 
-export const DocumentV1 = Schema.Struct({
+// Scenarios are stored as their Changes (ADR 0010); their plans are replayed, never stored.
+const Target = Schema.Union([Id, Schema.Struct({ created: Id })]);
+const Point = Schema.Struct({ x: Mm, y: Mm });
+const WallRef = Schema.Struct({
+  axis: Schema.Literals(['h', 'v']),
+  c: Mm,
+  t0: Mm,
+  t1: Mm,
+  neg: Schema.NullOr(Target),
+  pos: Schema.NullOr(Target)
+});
+const OpeningKind = Schema.Literals(['door', 'window', 'opening']);
+const RoomType = Schema.Literals(['bedroom', 'bathroom', 'kitchen', 'living', 'laundry', 'hallway', 'other']);
+const change = <Op extends string, F extends Schema.Struct.Fields>(op: Op, fields: F) =>
+  Schema.Struct({ id: Id, op: Schema.Literal(op), ...fields });
+const Change = Schema.Union([
+  change('demolishWall', { wall: WallRef, keep: Schema.NullOr(Target) }),
+  change('drawWall', { a: Point, b: Point, thickness: Mm.check(Schema.isGreaterThanOrEqualTo(1)) }),
+  change('pushWall', { wall: WallRef, delta: Mm, outline: Schema.Boolean }),
+  change('setThickness', { wall: WallRef, thickness: Mm }),
+  change('addOpening', { wall: WallRef, kind: OpeningKind, center: Mm }),
+  change('removeOpening', { opening: Target }),
+  change('modifyOpening', {
+    opening: Target,
+    patch: Schema.Struct({
+      kind: Schema.optionalKey(OpeningKind),
+      at: Schema.optionalKey(Mm),
+      width: Schema.optionalKey(Mm),
+      swing: Schema.optionalKey(Schema.Literals(['neg', 'pos'])),
+      hinge: Schema.optionalKey(Schema.Literals(['start', 'end']))
+    })
+  }),
+  change('nameSpace', { x: Mm, y: Mm, name: Schema.String }),
+  change('renameRoom', { room: Target, name: Schema.String }),
+  change('setRoomType', { room: Target, type: RoomType })
+]);
+const ScenarioSchema = Schema.Struct({
+  id: Id,
+  name: Schema.String,
+  changes: Schema.Array(Change),
+  nextId: Mm
+});
+
+export const DocumentV2 = Schema.Struct({
   format: Schema.Literal(FORMAT),
-  version: Schema.Literal(1),
+  version: Schema.Literal(2),
   project: Schema.Struct({
     id: Id,
     name: Schema.String,
     createdAt: Schema.String,
     updatedAt: Schema.String,
-    existingPlan: PlanV1
+    existingPlan: PlanSchema,
+    scenarios: Schema.Array(ScenarioSchema)
   })
 });
 
@@ -65,10 +110,41 @@ export interface Project {
   createdAt: string;
   updatedAt: string;
   existingPlan: Plan;
+  scenarios: Scenario[];
 }
 
-/** Migrations from each older version to the next. Empty while v1 is the only version. */
-const MIGRATIONS: Record<number, (doc: Record<string, unknown>) => Record<string, unknown>> = {};
+type Json = Record<string, unknown>;
+const obj = (v: unknown): Json | null =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Json) : null;
+
+/**
+ * Migrations from each older version to the next. They run before decoding, on whatever the file holds,
+ * so they only reshape what is there and leave anything malformed for the decoder to reject.
+ */
+const MIGRATIONS: Record<number, (doc: Json) => Json> = {
+  // v2: Scenarios (ADR 0010). A Project gains an empty Scenario list; every Wall gains `drawn`, and no
+  // Wall captured before Draw Wall existed was drawn.
+  1(doc) {
+    const project = obj(doc.project);
+    if (!project) return { ...doc, version: 2 };
+    const plan = obj(project.existingPlan);
+    const walls = obj(plan?.walls);
+    const drawn = walls
+      ? Object.fromEntries(
+          Object.entries(walls).map(([id, w]) => [id, obj(w) ? { ...obj(w), drawn: false } : w])
+        )
+      : plan?.walls;
+    return {
+      ...doc,
+      version: 2,
+      project: {
+        ...project,
+        existingPlan: plan ? { ...plan, walls: drawn } : project.existingPlan,
+        scenarios: []
+      }
+    };
+  }
+};
 
 export function toDocument(project: Project) {
   return { format: FORMAT, version: VERSION, project };
@@ -90,7 +166,7 @@ export function fromDocument(input: unknown): Opened {
     if (!step) return { ok: false, error: `Cannot read format ${v}.` };
     doc = step(doc);
   }
-  const decoded = Schema.decodeUnknownResult(DocumentV1)(doc);
+  const decoded = Schema.decodeUnknownResult(DocumentV2)(doc);
   if (Result.isFailure(decoded))
     return { ok: false, error: `The file is damaged: ${String(decoded.failure)}` };
   const p = decoded.success.project;
@@ -99,7 +175,30 @@ export function fromDocument(input: unknown): Opened {
   const plan = normalizePlan(p.existingPlan as Plan);
   const errs = checkPlan(plan);
   if (errs.length) return { ok: false, error: `The plan in the file is inconsistent: ${errs[0]}` };
-  return { ok: true, project: { ...p, existingPlan: plan } };
+  const scenarios = p.scenarios as Scenario[];
+  const bad = inconsistentScenario(scenarios);
+  if (bad) return { ok: false, error: `The Scenarios in the file are inconsistent: ${bad}` };
+  return { ok: true, project: { ...p, existingPlan: plan, scenarios } };
+}
+
+/**
+ * Ids must be unique and counters past them. What a Change points at needs no check: a Change whose
+ * target is missing is a Conflict when the Scenario is replayed.
+ */
+function inconsistentScenario(scenarios: readonly Scenario[]): string | null {
+  const ids = new Set<string>();
+  for (const s of scenarios) {
+    if (ids.has(s.id)) return `scenario ${s.id} appears twice`;
+    ids.add(s.id);
+    const changes = new Set<string>();
+    for (const c of s.changes) {
+      if (changes.has(c.id)) return `change ${c.id} appears twice in scenario ${s.id}`;
+      changes.add(c.id);
+      if (Number(c.id.slice(1)) >= s.nextId)
+        return `scenario ${s.id} has nextId ${s.nextId} not past ${c.id}`;
+    }
+  }
+  return null;
 }
 
 /** The first reference to something that isn't there, if any. */
