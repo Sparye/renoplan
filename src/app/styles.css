@@ -1,0 +1,95 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.5rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.205 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.205 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.205 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.52 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+
+  /* The drawing (look and feel in docs/intent.md): white paper, solid dark Walls, soft Room tints. */
+  --plan-paper: #ffffff;
+  --plan-grid: #eef0f3;
+  --plan-wall: #2f3237;
+  --plan-ink: #2b2f36;
+  --plan-ink-soft: #6b7280;
+  --plan-select: #2563eb;
+  --plan-guide: #e11d74;
+  --plan-overlap: #ef4444;
+  --plan-warn: #d97706;
+  --plan-unlabelled: #f4f2ec;
+  --plan-unlabelled-line: #e2ded2;
+  --tint-bedroom: #e6ecf8;
+  --tint-bathroom: #dff0f0;
+  --tint-kitchen: #fbeedb;
+  --tint-living: #e9f2e1;
+  --tint-laundry: #eee8f6;
+  --tint-hallway: #f1f0ec;
+  --tint-other: #f5f2ea;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    overscroll-behavior: none;
+  }
+}
+
+/* Labels on the drawing stay legible over Walls and tints. */
+.plan-label {
+  paint-order: stroke;
+  stroke: var(--plan-paper);
+  stroke-linejoin: round;
+  user-select: none;
+}

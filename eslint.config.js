@@ -1,32 +1,29 @@
 import js from '@eslint/js';
-import prettier from 'eslint-config-prettier';
-import svelte from 'eslint-plugin-svelte';
+import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
-import ts from 'typescript-eslint';
+import tseslint from 'typescript-eslint';
 
-export default [
+export default tseslint.config(
+  { ignores: ['dist', 'test-results', 'playwright-report'] },
   js.configs.recommended,
-  ...ts.configs.recommended,
-  ...svelte.configs.recommended,
+  ...tseslint.configs.recommended,
   {
-    files: ['**/*.svelte'],
-    languageOptions: {
-      parserOptions: {
-        parser: ts.parser
-      }
-    }
-  },
-  prettier,
-  ...svelte.configs.prettier,
-  {
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-        ...globals.node
-      }
+    files: ['src/**/*.{ts,tsx}'],
+    languageOptions: { globals: globals.browser },
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      ...reactHooks.configs.recommended.rules,
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }]
     }
   },
   {
-    ignores: ['build/', '.svelte-kit/', 'node_modules/']
+    // The core stays framework-free (ADR 0008).
+    files: ['src/core/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        { patterns: ['react', 'react-*', 'zustand', 'effect', 'effect/*', '@/app/*', '@/persistence/*'] }
+      ]
+    }
   }
-];
+);
