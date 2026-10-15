@@ -12,7 +12,7 @@ The plan is stored as a graph of orthogonal Walls, each with a thickness. Rooms 
 
 ## Consequences
 
-- Walls have stable identities, which Scenario Changes (ADR 0001) refer to.
+- Walls have identities, but normal form renumbers them, so Scenario Changes find Walls by where they are (ADR 0010).
 - Irregular (orthogonal polygon) Rooms come for free.
 - Room areas are computed from inside Wall faces, so Walls must have thickness — they do (default ~200 mm exterior, ~100 mm interior).
 - Touching Rooms share one Wall, never two.
