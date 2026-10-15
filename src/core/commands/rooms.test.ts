@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import { derive } from '../derive';
-import { emptyPlan } from '../plan';
+import { emptyPlan, wallLine } from '../plan';
 import { sharedWalls, size, valid, wallAt } from '../test/helpers';
 import { addOpening } from './openings';
 import { addOutline, addWing } from './outline';
-import { pushWall } from './walls';
+import { pushWall, setWallThickness } from './walls';
 import { addRoom, deleteRoom, mergeRooms, moveRoom, nameSpace, renameRoom, setRoomSize } from './rooms';
 
 const base = () => valid(addOutline(emptyPlan(), 10000, 8000, { x: 0, y: 0 }));
@@ -146,6 +146,34 @@ describe('moveRoom', () => {
     const o = addWing(addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 }), 'top', 1500, 1500);
     const hall = nameSpace(o, 3000, 2500, 'Hallway');
     const p = valid(pushWall(hall.plan, wallAt(hall.plan, 'v', 1300, hall.id!), 4500));
+    const q = valid(moveRoom(p, hall.id!, 0, 0));
+    expect(derive(q).rooms[hall.id!]!.rects).toEqual(derive(p).rooms[hall.id!]!.rects);
+  });
+
+  test("moving keeps a hall's corner closed where it wraps around the Outline's corner", () => {
+    // The hall's inside corner lands on the Outline's bottom-right corner: its own Walls fuse into the
+    // right exterior Wall (leaving the hall a stub of it) and then into the bottom one.
+    const o = addWing(addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 }), 'left', 1500, 1500);
+    const hall = nameSpace(o, 3000, 2500, 'Hallway');
+    const area = derive(hall.plan).rooms[hall.id!]!.area;
+    const p = valid(moveRoom(hall.plan, hall.id!, 5400, 3100));
+    const q = valid(moveRoom(p, hall.id!, 400, 400));
+    expect(derive(q).rooms[hall.id!]!.area).toBe(area);
+  });
+
+  test("moving by zero keeps a hall's corner where a thinner Outline Wall was pulled out", () => {
+    // The left exterior Wall is thinned to 150 mm and the hall's side pulled out past it, then the
+    // Outline itself: the hall's corner below the wing is left with 1 mm jogs and a stub of its own Wall.
+    const o = addWing(addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 }), 'left', 1500, 1500);
+    const hall = nameSpace(o, 3000, 2500, 'Hallway');
+    let p = pushWall(hall.plan, wallAt(hall.plan, 'h', 200, hall.id!), 0);
+    p = setWallThickness(p, wallAt(p, 'v', 200, hall.id!), 150);
+    p = pushWall(p, wallAt(p, 'v', 150, hall.id!), -50);
+    const left = Object.keys(p.walls).find((id) => {
+      const l = wallLine(p, p.walls[id]!);
+      return p.walls[id]!.exterior && l.axis === 'v' && l.lo === 0 && l.t0 === 1400;
+    })!;
+    p = valid(pushWall(p, left, -50));
     const q = valid(moveRoom(p, hall.id!, 0, 0));
     expect(derive(q).rooms[hall.id!]!.rects).toEqual(derive(p).rooms[hall.id!]!.rects);
   });

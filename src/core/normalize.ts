@@ -159,16 +159,24 @@ export function applyFusion(p: Plan, fu: Fusion) {
   p.walls[host]![fu.side] = room;
   moveOpenings(p, own, host);
   const axis = wallLine(p, p.walls[own]!).axis;
-  // The Room's side Walls re-end on the host's centreline.
+  // The Room's side Walls re-end on the host's centreline. A stub of the Room's already reaching the
+  // host's end (left between the two centrelines by an earlier fusion at the same corner) would collapse.
+  // Unless a Wall in line with it, re-ended from the other side or already going on from the host's end,
+  // takes over its stretch with the same claims, it stays as it is, so the Room keeps its corner closed.
   for (const [n, m] of [
     [endNode(p, own, 0), endNode(p, host, 0)],
     [endNode(p, own, 1), endNode(p, host, 1)]
   ] as const) {
     if (n === m) continue;
-    for (const id of wallsAt(p, n)) {
-      if (id === own) continue;
+    const across = (id: WallId) => wallLine(p, p.walls[id]!).axis !== axis;
+    const sides = wallsAt(p, n).filter((id) => id !== own && across(id));
+    for (const id of sides) {
       const w = p.walls[id]!;
-      if (wallLine(p, w).axis === axis) continue;
+      const takenOver = [...sides, ...wallsAt(p, m).filter(across)].some((o) => {
+        const x = p.walls[o]!;
+        return o !== id && x.neg === w.neg && x.pos === w.pos && x.thickness >= w.thickness;
+      });
+      if ((w.a === m || w.b === m) && claims(w, room!) && !takenOver) continue;
       if (w.a === n) w.a = m;
       if (w.b === n) w.b = m;
     }
