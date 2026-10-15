@@ -53,36 +53,42 @@ export function addRoom(p: Plan, r: NewRoom): { plan: Plan; id: RoomId | null } 
   });
 }
 
+/** A thickness for each side of a rectangle of Walls. */
+export type SideThickness = { top: Mm; bottom: Mm; left: Mm; right: Mm };
+
 /**
- * Four Walls of thickness t around a rectangle. With a room, the rectangle is its inside and each Wall
- * claims it; without, the rectangle is the outside of the Walls (an Outline).
+ * Four Walls of thickness t (one for all sides, or one per side) around a rectangle. With a room, the
+ * rectangle is its inside and each Wall claims it; without, the rectangle is the outside of the Walls
+ * (an Outline).
  */
-export function rectWalls(p: Plan, r: Rect, t: Mm, room: RoomId | null, exterior: boolean) {
-  const [fl, ce] = faceOffsets(t);
+export function rectWalls(p: Plan, r: Rect, t: Mm | SideThickness, room: RoomId | null, exterior: boolean) {
+  const ts = typeof t === 'number' ? { top: t, bottom: t, left: t, right: t } : t;
   // Room: faces on the rectangle from outside. Outline: faces on the rectangle from inside.
-  const x0 = room ? r.x0 - ce : r.x0 + fl;
-  const x1 = room ? r.x1 + fl : r.x1 - ce;
-  const y0 = room ? r.y0 - ce : r.y0 + fl;
-  const y1 = room ? r.y1 + fl : r.y1 - ce;
+  const lo = (v: Mm, th: Mm) => (room ? v - faceOffsets(th)[1] : v + faceOffsets(th)[0]);
+  const hi = (v: Mm, th: Mm) => (room ? v + faceOffsets(th)[0] : v - faceOffsets(th)[1]);
+  const x0 = lo(r.x0, ts.left);
+  const x1 = hi(r.x1, ts.right);
+  const y0 = lo(r.y0, ts.top);
+  const y1 = hi(r.y1, ts.bottom);
   const tl = addNode(p, x0, y0);
   const tr = addNode(p, x1, y0);
   const br = addNode(p, x1, y1);
   const bl = addNode(p, x0, y1);
-  const wall = (a: string, b: string, side: Side | null) => {
+  const wall = (a: string, b: string, thickness: Mm, side: Side | null) => {
     p.walls[mintId(p, 'w')] = {
       a,
       b,
-      thickness: t,
+      thickness,
       exterior,
       structural: false,
       neg: side === 'neg' ? room : null,
       pos: side === 'pos' ? room : null
     };
   };
-  wall(tl, tr, room ? 'pos' : null);
-  wall(bl, br, room ? 'neg' : null);
-  wall(tl, bl, room ? 'pos' : null);
-  wall(tr, br, room ? 'neg' : null);
+  wall(tl, tr, ts.top, room ? 'pos' : null);
+  wall(bl, br, ts.bottom, room ? 'neg' : null);
+  wall(tl, bl, ts.left, room ? 'pos' : null);
+  wall(tr, br, ts.right, room ? 'neg' : null);
 }
 
 /** The next free spot in rows to the right of the Outline (or of everything, without one). */

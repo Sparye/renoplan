@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import { derive } from '../derive';
-import { emptyPlan } from '../plan';
+import { emptyPlan, wallLine } from '../plan';
 import { size, valid } from '../test/helpers';
 import { addOutline, addWing, setOutlineSize } from './outline';
-import { addRoom } from './rooms';
+import { addRoom, moveRoom, nameSpace } from './rooms';
+import { setWallThickness } from './walls';
 
 describe('Outline', () => {
   test('is four exterior walls measured outside', () => {
@@ -34,6 +35,26 @@ describe('Outline', () => {
     const a = addRoom(p, { name: 'A', w: 3000, l: 2000, x: 6800, y: 200 });
     p = valid(addWing(a.plan, 'right', 4000, 3000));
     expect(size(p, a.id!)).toEqual([3000, 2000]);
+  });
+
+  test('a wing flush with a thinner Outline Wall continues it, with no jog', () => {
+    let p = addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 });
+    const left = Object.keys(p.walls).find((id) => {
+      const l = wallLine(p, p.walls[id]!);
+      return l.axis === 'v' && l.lo === 0;
+    })!;
+    p = valid(addWing(setWallThickness(p, left, 300), 'left', 1500, 1500));
+    // The wing's top Wall and the Outline's top Wall are one 200 mm Wall.
+    const top = Object.values(p.walls).filter((w) => {
+      const l = wallLine(p, w);
+      return l.axis === 'h' && l.lo === 0;
+    });
+    expect(top.map((w) => [w.thickness, wallLine(p, w).t0, wallLine(p, w).t1])).toEqual([[200, -1350, 5900]]);
+    // Moving the Room filling the L by nothing changes nothing.
+    const s = derive(p).unlabelled[0]!.label;
+    const named = nameSpace(p, s.x, s.y, 'Living');
+    const moved = valid(moveRoom(named.plan, named.id!, 0, 0));
+    expect(derive(moved).rooms[named.id!]!.area).toBe(derive(named.plan).rooms[named.id!]!.area);
   });
 
   test('editing the size moves the right and bottom walls', () => {
