@@ -143,3 +143,20 @@ export function repairClaims(p: Plan): boolean {
 }
 
 export class RepairFailed extends Error {}
+
+/** The parts of the spans a outside the spans b. */
+export function without(a: readonly [number, number][], b: readonly [number, number][]): [number, number][] {
+  let out = [...a];
+  for (const [b0, b1] of b)
+    out = out.flatMap(([a0, a1]): [number, number][] =>
+      b1 <= a0 || b0 >= a1
+        ? [[a0, a1]]
+        : (
+            [
+              [a0, b0],
+              [b1, a1]
+            ] as [number, number][]
+          ).filter(([x, y]) => y > x)
+    );
+  return out;
+}

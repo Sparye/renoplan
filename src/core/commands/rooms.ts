@@ -1,5 +1,5 @@
 import { derive } from '../derive';
-import { claimGrid, claimSpans, faceSpans } from '../claims';
+import { claimGrid, claimSpans, faceSpans, without } from '../claims';
 import { type Rect, intersects } from '../grid';
 import { addNode, deleteWall, moveNodes } from '../graph';
 import {
@@ -249,23 +249,6 @@ export function mergeRooms(p: Plan, wallId: WallId, prefer?: RoomId): { plan: Pl
     delete d.rooms[drop];
     return keep;
   });
-}
-
-/** The parts of the spans a outside the spans b. */
-function without(a: readonly [number, number][], b: readonly [number, number][]): [number, number][] {
-  let out = [...a];
-  for (const [b0, b1] of b)
-    out = out.flatMap(([a0, a1]): [number, number][] =>
-      b1 <= a0 || b0 >= a1
-        ? [[a0, a1]]
-        : (
-            [
-              [a0, b0],
-              [b1, a1]
-            ] as [number, number][]
-          ).filter(([x, y]) => y > x)
-    );
-  return out;
 }
 
 /** Turns the Unlabelled Space at a point into a Room by claiming the free Wall faces around it. */

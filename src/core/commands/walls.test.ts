@@ -123,6 +123,33 @@ describe('drawWall', () => {
   const drawnIds = (p: ReturnType<typeof emptyPlan>) =>
     Object.keys(p.walls).filter((id) => p.walls[id]!.drawn);
 
+  test('a drawn Wall dividing a Room keeps the larger part as the Room; the rest is Unlabelled', () => {
+    const { p, a } = house();
+    const before = derive(p).unlabelled.reduce((n, s) => n + s.area, 0);
+    // A is 3 × 4 m at x 200–3200; a Wall at x = 1200 cuts off 950 mm on its left.
+    const q = valid(drawWall(p, { x: 1200, y: 100 }, { x: 1200, y: 4250 }).plan);
+    const D = derive(q);
+    expect(D.rooms[a]!.bounds).toEqual({ x0: 1250, y0: 200, x1: 3200, y1: 4200 });
+    expect(D.unlabelled.reduce((n, s) => n + s.area, 0) - before).toBe(950 * 4000);
+    // Naming the cut-off part makes a Room that shares the drawn Wall.
+    const n = nameSpace(q, 700, 2000, 'Study');
+    const r = valid(n.plan);
+    expect(size(r, n.id!)).toEqual([950, 4000]);
+    expect(Object.values(r.walls).some((w) => w.drawn && w.neg === n.id && w.pos === a)).toBe(true);
+  });
+
+  test('a drawn Wall that stops short of dividing a Room leaves it whole', () => {
+    const { p, a } = house();
+    const area = derive(p).rooms[a]!.area;
+    const q = valid(drawWall(p, { x: 1200, y: 100 }, { x: 1200, y: 3000 }).plan);
+    expect(derive(q).rooms[a]!.area).toBe(area);
+    expect(
+      Object.values(q.walls)
+        .filter((w) => w.drawn)
+        .every((w) => !w.neg && !w.pos)
+    ).toBe(true);
+  });
+
   test('a drawn Wall bounding no Room stays', () => {
     const { p } = house();
     const d = drawWall(p, { x: 6000, y: 1000 }, { x: 6000, y: 5000 });

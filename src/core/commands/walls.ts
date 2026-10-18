@@ -1,13 +1,17 @@
+import { claimGrid, claimSpans, faceSpans, without } from '../claims';
 import { derive } from '../derive';
-import { addNode, collinearClosure, incidence, moveNodes, runOf } from '../graph';
+import { Grid, type Rect, intersects } from '../grid';
+import { addNode, collinearClosure, incidence, materialRect, moveNodes, roomRegion, runOf } from '../graph';
 import { mergeCollinear, mergeNodes } from '../normalize';
 import {
   type Axis,
   type NodeId,
   type Plan,
   type RoomId,
+  type Side,
   type WallId,
   clonePlan,
+  faceOf,
   faceOffsets,
   mintId,
   point,
@@ -232,8 +236,77 @@ export function drawWall(
       };
       if (!longest || s1 - s0 > longest[1]) longest = [id, s1 - s0];
     }
+    splitDivided(d);
     return longest![0];
   });
+}
+
+/**
+ * A Room that drawn Walls divide into separate parts keeps the largest part. The rest stops being the
+ * Room's and shows as Unlabelled Space, for the user to name.
+ */
+function splitDivided(d: Plan) {
+  const drawn = Object.keys(d.walls)
+    .filter((id) => d.walls[id]!.drawn)
+    .map((id) => materialRect(d, id));
+  for (const room of Object.keys(d.rooms)) {
+    const region = roomRegion(d, room);
+    const cut = drawn.filter((r) => region.some((q) => intersects(q, r)));
+    if (!cut.length) continue;
+    const g = new Grid([...region, ...cut]);
+    const inside = g.mask(region);
+    const blocked = g.mask(cut);
+    const open = (c: number) => inside[c] === 1 && !blocked[c];
+    const seen = new Uint8Array(g.size);
+    const parts: { mask: Uint8Array; area: number }[] = [];
+    for (let c = 0; c < g.size; c++) {
+      if (seen[c] || !open(c)) continue;
+      const mask = g.flood([c], open);
+      let area = 0;
+      for (let k = 0; k < g.size; k++)
+        if (mask[k]) {
+          seen[k] = 1;
+          area += g.cellArea(k);
+        }
+      parts.push({ mask, area });
+    }
+    if (parts.length < 2) continue;
+    const keep = parts.reduce((a, b) => (b.area > a.area ? b : a));
+    reclaim(
+      d,
+      room,
+      g.rects((c) => keep.mask[c] === 1)
+    );
+  }
+}
+
+/**
+ * Trims a Room's claims to the faces bordering `region`, and claims the drawn Walls' faces along it. Called
+ * while drawing, when the only Walls bounding no Room are drawn ones.
+ */
+function reclaim(d: Plan, room: RoomId, region: Rect[]) {
+  const { g, junction } = claimGrid(d, region);
+  const mask = g.mask(region);
+  for (const id of Object.keys(d.walls)) {
+    const w = d.walls[id]!;
+    const line = wallLine(d, w);
+    const rect = materialRect(d, id);
+    const spans = (side: Side) =>
+      faceSpans(g, mask, junction[line.axis], line.axis, faceOf(line, side), side, rect);
+    if (w.drawn) {
+      // A drawn Wall bounds the part on one face only; with the part on both faces it stands inside it.
+      const neg = w.neg === null ? spans('neg') : [];
+      const pos = w.pos === null ? spans('pos') : [];
+      if (neg.length) claimSpans(d, id, 'neg', without(neg, pos), room, null);
+      if (pos.length) claimSpans(d, id, 'pos', without(pos, neg), room, null);
+      continue;
+    }
+    for (const side of ['neg', 'pos'] as const)
+      if (w[side] === room) claimSpans(d, id, side, spans(side), room, null);
+  }
+  // A Wall the Room let go of still stands (it is in the house): it stays like a drawn Wall instead of
+  // being dropped as a capture leftover, which would show it as Demolished.
+  for (const w of Object.values(d.walls)) if (!w.exterior && !w.neg && !w.pos) w.drawn = true;
 }
 
 /** The run through a Wall and the Rooms on each side of it. */

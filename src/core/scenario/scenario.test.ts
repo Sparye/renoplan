@@ -429,8 +429,8 @@ describe('Conflicts', () => {
       })
     );
     expect(s.changes[2]).toMatchObject({ room: { created: 'c2' } });
-    // The user names that floor in the Existing Plan, so there is no Unlabelled Space left to name.
-    const e = valid(nameSpace(p, 9200, 4000, 'Porch').plan);
+    // The user captures a Room on that floor in the Existing Plan, so there is no Unlabelled Space to name.
+    const e = valid(addRoom(p, { name: 'Den', w: 800, l: 1500, x: 8800, y: 3300 }).plan);
     const r = applyScenario(e, s);
     expect(r.conflicts).toEqual([
       { change: 'c2', reason: 'rejected' },
@@ -564,6 +564,18 @@ describe('replay', () => {
 });
 
 describe('Change Status', () => {
+  test('drawing a Wall across a Room demolishes nothing; the Room keeps its larger part', () => {
+    const { p, k } = house();
+    // The Kitchen is 4 × 3.8 m at x 200–4200; a Wall at x = 1200 cuts off 950 mm.
+    const s = scenario(p, () => ({ op: 'drawWall', a: { x: 1200, y: 100 }, b: { x: 1200, y: 4050 } }));
+    const r = applyScenario(p, s);
+    valid(r.plan);
+    expect(r.conflicts).toEqual([]);
+    expect(r.statuses.demolished).toEqual({});
+    expect(derive(r.plan).rooms[k]!.bounds).toMatchObject({ x0: 1250, x1: 4200 });
+    expect(r.statuses.rooms[k]).toBe('retained');
+  });
+
   test('lengths add up: Retained + Demolished is the Existing Plan, Retained + New is the Scenario', () => {
     const { p, k, d } = house();
     const s = scenario(
