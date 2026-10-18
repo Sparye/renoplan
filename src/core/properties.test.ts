@@ -433,6 +433,72 @@ function statusesAddUp(existing: Plan, r: ReturnType<typeof applyScenario>) {
     expect(length(retained.get(k) ?? []) + length(added.get(k) ?? [])).toBe(length(s));
 }
 
+// Known open capture bugs (ADR 0009, "Known open"), pinned as failing until fixed. Each replays a
+// counterexample the random sessions found.
+const replay = (ops: Op[]) => {
+  let p = emptyPlan();
+  for (const o of ops) {
+    p = apply(p, o);
+    const errs = checkPlan(p);
+    if (errs.length) throw new Error(errs.join('; '));
+  }
+  return p;
+};
+const zeroMoveKeepsAreas = (p: Plan, i: number) => {
+  const r = pick(Object.keys(p.rooms), i)!;
+  expect(areas(moveRoom(p, r, 0, 0))).toEqual(areas(p));
+};
+
+test.fails("end cap A: a Room bounded by a thick Wall's end cap keeps its area on a zero move", () => {
+  const p = replay([
+    { k: 'outline', w: 6000, l: 5000 },
+    { k: 'wing', side: 'top', w: 3400, l: 1500 },
+    { k: 'push', i: 1126362752, d: -2550, outline: false },
+    { k: 'name', i: 0 },
+    { k: 'thickness', i: 230723158, t: 50 },
+    { k: 'outline', w: 6000, l: 5000 }
+  ]);
+  zeroMoveKeepsAreas(p, 0);
+});
+
+test.fails('end cap B: a merged Room crossing the Outline keeps its area on a 50 mm move', () => {
+  replay([
+    { k: 'outline', w: 6000, l: 5000 },
+    { k: 'add', w: 600, l: 600 },
+    { k: 'push', i: 103677491, d: 2250, outline: false },
+    { k: 'name', i: 0 },
+    { k: 'size', i: 0, w: 300, l: 750 },
+    { k: 'merge', i: 0 },
+    { k: 'move', i: 0, dx: 0, dy: -50, snap: false }
+  ]);
+});
+
+test.fails('end cap E: a merged Room across a right wing keeps its area on a 50 mm move', () => {
+  replay([
+    { k: 'add', w: 600, l: 600 },
+    { k: 'outline', w: 6000, l: 5000 },
+    { k: 'name', i: 0 },
+    { k: 'wing', side: 'right', w: 1500, l: 1500 },
+    { k: 'move', i: 0, dx: -2200, dy: 750, snap: false },
+    { k: 'merge', i: 0 },
+    { k: 'move', i: 0, dx: 0, dy: -50, snap: false }
+  ]);
+});
+
+test.fails('merge then move never leaves a Room on both faces of a Wall', () => {
+  replay([
+    { k: 'outline', w: 6000, l: 5000 },
+    { k: 'name', i: 0 },
+    { k: 'add', w: 600, l: 600 },
+    { k: 'add', w: 600, l: 600 },
+    { k: 'move', i: 1871132627, dx: -1150, dy: 0, snap: true },
+    { k: 'push', i: 734491472, d: -50, outline: false },
+    { k: 'move', i: 0, dx: 1700, dy: -250, snap: true },
+    { k: 'merge', i: 79485247 },
+    { k: 'move', i: 0, dx: 0, dy: 50, snap: false }
+  ]);
+});
+
 test('a Scenario replays soundly over any later Existing Plan edits', () => {
   fc.assert(
     fc.property(

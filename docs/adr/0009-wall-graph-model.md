@@ -29,3 +29,9 @@ ADR 0004 makes Walls primary and Rooms derived. ADR 0007 needs an Overlap to per
 - Moving a Room first detaches it: the neighbour keeps each Shared Wall (with its id and Openings) and the moving Room gets a copy.
 - When a Wall splits, the piece that stays put keeps the id, but normal form still retires and renumbers Wall ids freely (pushing a Shared Wall, resizing a Room, detach/re-fuse). So Scenario Changes do not refer to Wall ids: they find their Wall by where it is (ADR 0010).
 - Walls of different thickness meeting end to end on one face (a jog) are joined only geometrically, not through a node. Commands avoid creating them (a wing keeps the Wall under a Room, and a wing side flush with the Outline takes the thickness of the Outline Wall it continues; detached copies are never thicker than the exterior Wall they replace); the soundness backstop covers what remains.
+
+## Known open (2026-10-18)
+
+- **End caps.** Detach gives a Room its own Wall in place of each face it claims, but a Room's boundary can also run along the end cap of a thicker Wall's material, which it does not claim: a merged Room crossing the Outline, or a jog the user made with a thickness edit. Detach swaps the 200 mm exterior Wall for a 100 mm copy, the end cap shrinks, and the Room's region leaks (0.01 m² on a zero move, or a Room collapsing on a 50 mm move). The likely fix is for detach to give the Room its own Wall along each end cap it depends on. To be done after the Scenario model (ADR 0010) lands, since it changes detach.
+- **A Room on both faces of a Wall** after merge-then-move, not yet investigated.
+- These are pinned as expected failures in `src/core/properties.test.ts` (and one in `commands/rooms.test.ts`), so fixing one turns its test red until it becomes an ordinary test. With them open, about 1 full `RUNS=20000` property run in 10 still fails.
