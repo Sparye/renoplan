@@ -1,3 +1,4 @@
+import { CompareSummary } from '../../compare/CompareSummary';
 import { useEditorStore } from '../context';
 import { currentPlan } from '../store';
 import { AddRoomForm } from './AddRoomForm';
@@ -13,6 +14,16 @@ export function SidePanel() {
   const selection = useEditor((s) => s.selection);
   const plan = useEditor(currentPlan);
   const scenario = useEditor((s) => (s.mode.kind === 'scenario' ? s.mode.id : null));
+  const comparing = useEditor((s) => !!s.compare);
+  if (comparing)
+    return (
+      <aside
+        className="bg-background relative z-10 flex w-80 shrink-0 flex-col overflow-y-auto border-l"
+        aria-label="Side panel"
+      >
+        <CompareSummary />
+      </aside>
+    );
   let body = scenario ? <ScenarioPanel /> : <PlanPanel />;
   if (selection?.kind === 'room' && plan.rooms[selection.id])
     body = <RoomPanel key={selection.id} id={selection.id} />;

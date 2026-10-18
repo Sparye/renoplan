@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, Plus } from 'lucide-react';
+import { ChevronDown, Columns2, Plus } from 'lucide-react';
 import type { Scenario } from '@/core';
 import {
   AlertDialog,
@@ -31,7 +31,8 @@ export function ScenarioTabs() {
   const order = useEditor((s) => s.project.scenarios);
   const histories = useEditor((s) => s.scenarios);
   const existing = useEditor((s) => s.history.present);
-  const { setMode, addScenario, renameScenario, duplicateScenario, deleteScenario } = useEditor.getState();
+  const { setMode, addScenario, renameScenario, duplicateScenario, deleteScenario, openCompare } =
+    useEditor.getState();
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [doomed, setDoomed] = useState<Scenario | null>(null);
@@ -133,6 +134,15 @@ export function ScenarioTabs() {
       })}
       <Button variant="ghost" size="sm" onClick={addScenario} aria-label="New scenario">
         <Plus /> Scenario
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={openCompare}
+        disabled={!order.length}
+        title={order.length ? 'Compare two scenarios side by side' : 'Add a scenario to compare it'}
+      >
+        <Columns2 /> Compare
       </Button>
 
       <AlertDialog open={!!doomed} onOpenChange={(o) => !o && setDoomed(null)}>

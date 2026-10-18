@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { deleteRoom } from '@/core';
 import type { Project } from '@/persistence';
+import { Comparison } from '../compare/Comparison';
 import { newId, projects } from '../projects';
 import { actions } from './actions';
 import { Canvas } from './Canvas';
@@ -15,6 +16,7 @@ export function Editor({ project }: { project: Project }) {
   const [useEditor] = useState(() => createEditor(project, projects, newId));
   const empty = useEditor((s) => !Object.keys(s.history.present.walls).length && !s.history.past.length);
   const [started, setStarted] = useState(!empty);
+  const comparing = useEditor((s) => !!s.compare);
 
   useEffect(() => {
     requestAnimationFrame(() => useEditor.getState().fit());
@@ -25,6 +27,11 @@ export function Editor({ project }: { project: Project }) {
       const st = useEditor.getState();
       const field = (e.target as HTMLElement).closest('input, textarea, select, [role="combobox"]');
       if ((e.target as HTMLElement).closest('[role="dialog"], [role="listbox"]')) return;
+      // The Comparison is read-only: Escape leaves it, and nothing else edits.
+      if (st.compare) {
+        if (e.key === 'Escape') st.closeCompare();
+        return;
+      }
       if (field) {
         // Escape leaves a field (it has already reset itself) and clears the selection.
         if (e.key === 'Escape') {
@@ -67,10 +74,16 @@ export function Editor({ project }: { project: Project }) {
     <EditorContext.Provider value={useEditor}>
       <div className="flex h-full">
         <main className="relative min-w-0 flex-1 overflow-hidden">
-          <Canvas />
-          <Toolbar />
-          <ScenarioTabs />
-          {!started && (
+          {comparing ? (
+            <Comparison />
+          ) : (
+            <>
+              <Canvas />
+              <Toolbar />
+              <ScenarioTabs />
+            </>
+          )}
+          {!started && !comparing && (
             <StartOverlay
               plan={useEditor.getState().history.present}
               onStart={(plan) => {
