@@ -25,10 +25,16 @@ import {
 } from '@/core';
 import type { Project, ProjectStore } from '@/persistence';
 
-/** A view that shows the whole plan with a margin, or null for an empty plan. */
-export function fitView(plan: Plan, size: { w: number; h: number }): View | null {
-  const b = planBounds(plan);
-  if (!b) return null;
+/** A view that shows the whole plan (or every plan) with a margin, or null for nothing to show. */
+export function fitView(plan: Plan | readonly Plan[], size: { w: number; h: number }): View | null {
+  const bs = (Array.isArray(plan) ? plan : [plan]).map(planBounds).filter((b) => !!b);
+  if (!bs.length) return null;
+  const b = {
+    x0: Math.min(...bs.map((r) => r.x0)),
+    y0: Math.min(...bs.map((r) => r.y0)),
+    x1: Math.max(...bs.map((r) => r.x1)),
+    y1: Math.max(...bs.map((r) => r.y1))
+  };
   const margin = 1500;
   const w = b.x1 - b.x0 + 2 * margin;
   const h = b.y1 - b.y0 + 2 * margin;
@@ -60,6 +66,18 @@ export interface View {
   ty: number;
 }
 
+/**
+ * The Comparison (CONTEXT.md): two read-only sides, each the Existing Plan or a Scenario, in one shared
+ * view so panning or zooming either pane moves both. The editor's Mode and view wait underneath.
+ */
+export interface Comparison {
+  left: Mode;
+  right: Mode;
+  view: View;
+  /** Each pane's size in screen pixels; the panes are the same size. */
+  size: { w: number; h: number };
+}
+
 /** A drag in progress: what the plan would be if the pointer were released now. */
 export interface Preview {
   plan: Plan;
@@ -81,6 +99,8 @@ export interface EditorState {
   tool: Tool;
   /** Scenarios whose Show Changes toggle is off. It is on by default and not stored (ADR 0010). */
   changesHidden: Record<string, boolean>;
+  /** The open Comparison, which replaces the canvas, or null in the editor. */
+  compare: Comparison | null;
   selection: Selection;
   preview: Preview | null;
   view: View;
@@ -117,6 +137,15 @@ export interface EditorState {
   renameScenario(id: string, name: string): void;
   duplicateScenario(id: string): void;
   deleteScenario(id: string): void;
+  /** Opens the Comparison: the Existing Plan against the open Scenario, or the first one. */
+  openCompare(): void;
+  setCompareSide(which: 'left' | 'right', side: Mode): void;
+  setCompareView(view: View | ((v: View) => View)): void;
+  setCompareSize(size: { w: number; h: number }): void;
+  /** Fits both sides in the Comparison's panes. */
+  fitCompare(): void;
+  /** Returns to the editor, in the Mode it was in. */
+  closeCompare(): void;
 }
 
 /** Drops a selection whose target no longer exists (after an undo, say). */
@@ -156,6 +185,12 @@ export const currentPlan = (s: Pick<EditorState, 'mode' | 'scenarios' | 'history
 
 /** The plan on screen: the drag preview while dragging, the current plan otherwise. */
 export const shownPlan = (s: EditorState): Plan => s.preview?.plan ?? currentPlan(s);
+
+/** One side of the Comparison: a Scenario applied to the Existing Plan, or null for the Existing Plan. */
+export function comparedApplied(s: Pick<EditorState, 'scenarios' | 'history'>, side: Mode): Applied | null {
+  const sc = side.kind === 'scenario' ? s.scenarios[side.id]?.present : null;
+  return sc ? applied(s.history.present, sc) : null;
+}
 
 /** "Option A", "Option B", … the first letter not taken. */
 function nextName(scenarios: readonly Scenario[]): string {
@@ -200,6 +235,7 @@ export function createEditor(project: Project, store: ProjectStore, newId: () =>
       mode: { kind: 'existing' },
       tool: 'select',
       changesHidden: {},
+      compare: null,
       selection: null,
       preview: null,
       view: { s: 0.05, tx: 80, ty: 80 },
@@ -332,9 +368,43 @@ export function createEditor(project: Project, store: ProjectStore, newId: () =>
         const project = withScenarios(scenarios);
         save(project);
         set({ scenarios, project });
-        const { mode } = get();
+        const { mode, compare } = get();
         if (mode.kind === 'scenario' && mode.id === id) get().setMode({ kind: 'existing' });
-      }
+        const gone = (m: Mode): Mode => (m.kind === 'scenario' && m.id === id ? { kind: 'existing' } : m);
+        if (compare) set({ compare: { ...compare, left: gone(compare.left), right: gone(compare.right) } });
+      },
+      openCompare() {
+        const { mode, project, view, size } = get();
+        const first = project.scenarios[0];
+        const right: Mode =
+          mode.kind === 'scenario' ? mode : first ? { kind: 'scenario', id: first.id } : { kind: 'existing' };
+        set({
+          compare: { left: { kind: 'existing' }, right, view, size: { w: size.w / 2, h: size.h } },
+          preview: null
+        });
+      },
+      setCompareSide(which, side) {
+        const { compare, scenarios } = get();
+        if (!compare || (side.kind === 'scenario' && !scenarios[side.id])) return;
+        set({ compare: { ...compare, [which]: side } });
+      },
+      setCompareView(view) {
+        const { compare } = get();
+        if (compare)
+          set({ compare: { ...compare, view: typeof view === 'function' ? view(compare.view) : view } });
+      },
+      setCompareSize(size) {
+        const { compare } = get();
+        if (compare) set({ compare: { ...compare, size } });
+      },
+      fitCompare() {
+        const st = get();
+        if (!st.compare) return;
+        const plan = (m: Mode) => comparedApplied(st, m)?.plan ?? st.history.present;
+        const v = fitView([plan(st.compare.left), plan(st.compare.right)], st.compare.size);
+        if (v) st.setCompareView(v);
+      },
+      closeCompare: () => set({ compare: null })
     };
   });
 }

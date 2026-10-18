@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import { type Plan, addOutline, addRoom, derive, emptyPlan, renameRoom, setRoomSize } from '@/core';
 import { type Project, memoryStorage, webStore } from '@/persistence';
 import { actions } from './actions';
-import { activeApplied, createEditor, currentPlan } from './store';
+import { activeApplied, comparedApplied, createEditor, currentPlan, fitView } from './store';
 
 /** Outline 10 × 8 m; Kitchen and Dining side by side sharing a Wall at x = 4250. */
 function house() {
@@ -149,5 +149,56 @@ describe('Scenario Mode', () => {
     expect(st().project.scenarios[0]!.changes).toMatchObject([{ op: 'drawRoom', name: 'Study' }]);
     st().undo();
     expect(st().project.scenarios[0]!.changes).toEqual([]);
+  });
+});
+
+describe('Comparison', () => {
+  test('opens on the Existing Plan against the open Scenario, and Done returns to that Mode', () => {
+    const { p, shared } = house();
+    const { st, act } = editor(p);
+    st().addScenario();
+    st().addScenario();
+    act.removeWall(shared);
+    const view = st().view;
+    st().openCompare();
+    expect(st().compare).toMatchObject({ left: { kind: 'existing' }, right: { kind: 'scenario', id: 's2' } });
+    expect(comparedApplied(st(), st().compare!.left)).toBeNull();
+    expect(Object.keys(comparedApplied(st(), st().compare!.right)!.plan.rooms)).toHaveLength(1);
+
+    // One shared view, separate from the editor's.
+    st().setCompareView((v) => ({ ...v, tx: v.tx + 40 }));
+    expect(st().compare!.view.tx).toBe(view.tx + 40);
+    expect(st().view).toBe(view);
+
+    st().closeCompare();
+    expect(st().compare).toBeNull();
+    expect(st().mode).toEqual({ kind: 'scenario', id: 's2' });
+    expect(st().view).toBe(view);
+  });
+
+  test('from the Existing Plan, it opens on the first Scenario; sides can be any Scenario', () => {
+    const { p } = house();
+    const { st } = editor(p);
+    st().addScenario();
+    st().addScenario();
+    st().setMode({ kind: 'existing' });
+    st().openCompare();
+    expect(st().compare!.right).toEqual({ kind: 'scenario', id: 's1' });
+    st().setCompareSide('left', { kind: 'scenario', id: 's2' });
+    expect(st().compare!.left).toEqual({ kind: 'scenario', id: 's2' });
+    st().setCompareSide('left', { kind: 'scenario', id: 'nope' });
+    expect(st().compare!.left).toEqual({ kind: 'scenario', id: 's2' });
+    st().deleteScenario('s2');
+    expect(st().compare!.left).toEqual({ kind: 'existing' });
+  });
+
+  test('fit shows both sides in a pane', () => {
+    const { p } = house();
+    const { st } = editor(p);
+    st().addScenario();
+    st().openCompare();
+    st().setCompareSize({ w: 500, h: 600 });
+    st().fitCompare();
+    expect(st().compare!.view).toEqual(fitView(p, { w: 500, h: 600 }));
   });
 });
