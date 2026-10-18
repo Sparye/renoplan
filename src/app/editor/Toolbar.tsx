@@ -4,20 +4,31 @@ import {
   Download,
   Eye,
   EyeOff,
+  FileImage,
+  FileText,
   Magnet,
   Maximize,
   PenLine,
   Redo2,
+  Share,
   SquarePlus,
   Undo2
 } from 'lucide-react';
 import { serialize } from '@/persistence';
 import { Button } from '@/app/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/app/components/ui/dropdown-menu';
 import { Input } from '@/app/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/app/components/ui/select';
 import { Separator } from '@/app/components/ui/separator';
 import { Toggle } from '@/app/components/ui/toggle';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
+import { type ExportFormat, exportSheet } from '../export';
+import { editorFileName, editorSheet } from '../export/editor';
 import { download, fileName } from '../files';
 import { go } from '../router';
 import { useEditorStore } from './context';
@@ -46,6 +57,20 @@ export function Toolbar() {
   const showChanges = useEditor((s) => !!scenario && !s.changesHidden[scenario]);
   const { undo, redo, fit, rename, setSnapStep, setTool, toggleChanges } = useEditor.getState();
   const [draft, setDraft] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+
+  const exportView = async (format: ExportFormat) => {
+    const sheet = editorSheet(useEditor.getState());
+    setExporting(true);
+    try {
+      await exportSheet(sheet, format, editorFileName(sheet, format));
+    } catch (e) {
+      console.error(e);
+      window.alert(`Could not export: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="bg-background/95 absolute top-3 left-3 z-10 flex items-center gap-1 rounded-lg border p-1 shadow-sm backdrop-blur">
@@ -139,6 +164,23 @@ export function Toolbar() {
           <Download /> Save
         </Button>
       </Tip>
+      <DropdownMenu>
+        <Tip label="Export what is on screen, to share">
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" disabled={exporting}>
+              <Share /> Export
+            </Button>
+          </DropdownMenuTrigger>
+        </Tip>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => exportView('png')}>
+            <FileImage /> PNG image
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => exportView('pdf')}>
+            <FileText /> PDF document
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
