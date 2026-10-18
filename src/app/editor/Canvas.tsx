@@ -12,7 +12,6 @@ import {
   derive,
   drawRoom,
   drawWall,
-  formatArea,
   formatMetres,
   moveOpening,
   prepareMove,
@@ -26,7 +25,8 @@ import {
 } from '@/core';
 import { NEW_ROOM } from './actions';
 import { useActions, useEditorStore } from './context';
-import { Dimension, Label, OpeningShape, TINT, rectsPath } from './drawing';
+import { Dimension, Label, rectsPath } from './drawing';
+import { PlanDrawing } from './PlanDrawing';
 import { type Selection, type View, activeApplied, currentPlan, shownPlan } from './store';
 
 /** Snap radius in screen pixels (validated by the prototype). */
@@ -287,9 +287,6 @@ export function Canvas() {
   const selRoom = sel?.kind === 'room' ? D.rooms[sel.id] : undefined;
   const selRun = sel?.kind === 'wall' && plan.walls[sel.id] ? runOf(plan, sel.id) : [];
   const selSpace = sel?.kind === 'space' ? D.unlabelled[D.spaceAt(sel.x, sel.y)] : undefined;
-  const crossing = new Set(D.crossing);
-  const parked = new Set(D.parked);
-  const outline = D.outline?.bounds;
   const dragging = !!preview;
 
   return (
@@ -307,232 +304,106 @@ export function Canvas() {
       onContextMenu={(e) => e.preventDefault()}
       data-testid="canvas"
     >
-      <defs>
-        <pattern
-          id="hatch"
-          patternUnits="userSpaceOnUse"
-          width="250"
-          height="250"
-          patternTransform="rotate(45)"
-        >
-          <rect width="250" height="250" fill="var(--plan-unlabelled)" />
-          <line x1="0" y1="0" x2="0" y2="250" stroke="var(--plan-unlabelled-line)" strokeWidth="40" />
-        </pattern>
-        <pattern
-          id="structural"
-          patternUnits="userSpaceOnUse"
-          width="80"
-          height="80"
-          patternTransform="rotate(45)"
-        >
-          <rect width="80" height="80" fill="var(--plan-wall)" />
-          <line x1="0" y1="0" x2="0" y2="80" stroke="#9aa1ab" strokeWidth="18" />
-        </pattern>
-      </defs>
       <g transform={`translate(${view.tx} ${view.ty}) scale(${view.s})`}>
-        <path
-          d={gridPath}
-          stroke="var(--plan-grid)"
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-          fill="none"
-        />
-
-        {Object.entries(D.rooms).map(([id, g]) => (
-          <path
-            key={id}
-            d={rectsPath(g.rects)}
-            fill={TINT[plan.rooms[id]!.type]}
-            stroke={crossing.has(id) ? 'var(--plan-overlap)' : parked.has(id) ? '#8b939e' : 'none'}
-            strokeDasharray={crossing.has(id) || parked.has(id) ? '6 4' : undefined}
-            strokeWidth={1.5}
-            vectorEffect="non-scaling-stroke"
-            data-hit={`room:${id}`}
-            style={{ cursor: scenario ? 'default' : 'move' }}
-          />
-        ))}
-
-        {D.unlabelled.map((s, i) => (
-          <path key={i} d={rectsPath(s.rects)} fill="url(#hatch)" data-hit="space" />
-        ))}
-
-        {changes && <Demolished existing={existing} demolished={changes.statuses.demolished} />}
-        <path d={rectsPath(D.slivers)} fill="var(--plan-wall)" pointerEvents="none" />
-        {Object.entries(D.walls).map(([id, g]) => {
-          const r = g.rect;
-          const horizontal = g.line.axis === 'h';
-          return (
-            <rect
-              key={id}
-              x={r.x0}
-              y={r.y0}
-              width={r.x1 - r.x0}
-              height={r.y1 - r.y0}
-              fill={plan.walls[id]!.structural ? 'url(#structural)' : 'var(--plan-wall)'}
-              stroke="transparent"
-              strokeWidth={10}
+        <PlanDrawing
+          plan={plan}
+          s={view.s}
+          changes={changes && { existing, statuses: changes.statuses }}
+          interactive
+          roomsMove={!scenario}
+          dragging={dragging}
+          selectedOpening={sel?.kind === 'opening' ? sel.id : null}
+          under={
+            <path
+              d={gridPath}
+              stroke="var(--plan-grid)"
+              strokeWidth={1}
               vectorEffect="non-scaling-stroke"
-              data-hit={`wall:${id}`}
-              style={{ cursor: horizontal ? 'ns-resize' : 'ew-resize' }}
+              fill="none"
             />
-          );
-        })}
-
-        {changes && !dragging && <NewWalls plan={plan} walls={changes.statuses.walls} />}
-
-        {Object.entries(plan.openings).map(([id, o]) => {
-          const g = D.walls[o.wall];
-          return g ? (
-            <OpeningShape
-              key={id}
-              id={id}
-              o={o}
-              line={g.line}
-              selected={sel?.kind === 'opening' && sel.id === id}
-              tone={changes && !dragging && changes.statuses.openings[id] === 'new' ? 'new' : undefined}
-            />
-          ) : null;
-        })}
-        {changes &&
-          changes.statuses.demolishedOpenings.map((id) => {
-            const o = existing.openings[id];
-            const g = o && derive(existing).walls[o.wall];
-            return g ? (
-              <OpeningShape key={`d${id}`} id={id} o={o} line={g.line} selected={false} tone="demolished" />
-            ) : null;
-          })}
-
-        <path d={rectsPath(D.overlaps)} fill="var(--plan-overlap)" fillOpacity={0.4} pointerEvents="none" />
-
-        {selRoom && (
-          <path
-            d={rectsPath(selRoom.rects)}
-            fill="var(--plan-select)"
-            fillOpacity={0.07}
-            stroke="var(--plan-select)"
-            strokeWidth={2}
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-          />
-        )}
-        {selRun.map((id) => {
-          const r = D.walls[id]!.rect;
-          return (
-            <rect
-              key={id}
-              x={r.x0}
-              y={r.y0}
-              width={r.x1 - r.x0}
-              height={r.y1 - r.y0}
-              fill="var(--plan-select)"
-              fillOpacity={0.75}
-              pointerEvents="none"
-            />
-          );
-        })}
-        {selSpace && (
-          <path
-            d={rectsPath(selSpace.rects)}
-            fill="none"
-            stroke="var(--plan-select)"
-            strokeWidth={2}
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-          />
-        )}
-
-        {outline && !dragging && (
-          <>
-            <Dimension axis="h" a={outline.x0} b={outline.x1} at={outline.y0} offset={-px(28)} px={px} />
-            <Dimension axis="v" a={outline.y0} b={outline.y1} at={outline.x0} offset={-px(28)} px={px} />
-          </>
-        )}
-        {selRoom?.rectangular && selRoom.bounds && !dragging && <RoomDimensions r={selRoom.bounds} px={px} />}
-        {preview?.measure && <DrawDimension {...preview.measure} px={px} />}
-        {preview?.drawing && <DrawingRoom {...preview.drawing} px={px} />}
-        {sel?.kind === 'opening' && plan.openings[sel.id] && (
-          <OpeningDimensions plan={plan} id={sel.id} px={px} />
-        )}
-
-        <g pointerEvents="none">
-          {Object.entries(D.rooms).map(([id, g]) => {
-            if (!g.label || !g.bounds) return null;
-            const big = g.rects.reduce((a, b) =>
-              Math.min(b.x1 - b.x0, b.y1 - b.y0) > Math.min(a.x1 - a.x0, a.y1 - a.y0) ? b : a
-            );
-            const roomy = Math.min(big.x1 - big.x0, big.y1 - big.y0) * view.s > 70;
-            const { x, y } = g.label;
-            const fresh = changes && changes.statuses.rooms[id] === 'new';
-            return (
-              <g key={id}>
-                {fresh && (
-                  <Label
-                    x={x}
-                    y={y - px(roomy ? 26 : 16)}
-                    size={10}
-                    px={px}
-                    weight={600}
-                    fill="var(--plan-new)"
-                  >
-                    NEW
-                  </Label>
-                )}
-                <Label x={x} y={y - px(roomy ? 10 : 0)} size={13} px={px} weight={600}>
-                  {plan.rooms[id]!.name}
-                </Label>
-                {roomy && (
-                  <Label x={x} y={y + px(6)} size={11} px={px} fill="var(--plan-ink-soft)">
-                    {formatArea(g.area)} m²
-                  </Label>
-                )}
-                {roomy && g.rectangular && (
-                  <Label x={x} y={y + px(20)} size={10} px={px} fill="#8b939e">
-                    {formatMetres(g.bounds.x1 - g.bounds.x0)} × {formatMetres(g.bounds.y1 - g.bounds.y0)}
-                  </Label>
-                )}
-              </g>
-            );
-          })}
-          {D.unlabelled.map((s, i) => (
-            <g key={i}>
-              <Label x={s.label.x} y={s.label.y - px(7)} size={11} px={px} weight={600} fill="#8a8577">
-                Unlabelled
-              </Label>
-              <Label x={s.label.x} y={s.label.y + px(8)} size={11} px={px} fill="#8a8577">
-                {formatArea(s.area)} m²
-              </Label>
-            </g>
-          ))}
-          {preview?.guides.map((g, i) => {
-            const ext = px(24);
-            return g.axis === 'v' ? (
-              <line
-                key={i}
-                x1={g.c}
-                x2={g.c}
-                y1={g.a - ext}
-                y2={g.b + ext}
-                stroke="var(--plan-guide)"
-                strokeWidth={1}
-                vectorEffect="non-scaling-stroke"
-              />
-            ) : (
-              <line
-                key={i}
-                y1={g.c}
-                y2={g.c}
-                x1={g.a - ext}
-                x2={g.b + ext}
-                stroke="var(--plan-guide)"
-                strokeWidth={1}
-                vectorEffect="non-scaling-stroke"
-              />
-            );
-          })}
-          {preview?.clearances.map((c, i) => (
-            <ClearanceLine key={i} c={c} px={px} />
-          ))}
-        </g>
+          }
+          overlay={
+            <>
+              {selRoom && (
+                <path
+                  d={rectsPath(selRoom.rects)}
+                  fill="var(--plan-select)"
+                  fillOpacity={0.07}
+                  stroke="var(--plan-select)"
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              )}
+              {selRun.map((id) => {
+                const r = D.walls[id]!.rect;
+                return (
+                  <rect
+                    key={id}
+                    x={r.x0}
+                    y={r.y0}
+                    width={r.x1 - r.x0}
+                    height={r.y1 - r.y0}
+                    fill="var(--plan-select)"
+                    fillOpacity={0.75}
+                    pointerEvents="none"
+                  />
+                );
+              })}
+              {selSpace && (
+                <path
+                  d={rectsPath(selSpace.rects)}
+                  fill="none"
+                  stroke="var(--plan-select)"
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              )}
+              {selRoom?.rectangular && selRoom.bounds && !dragging && (
+                <RoomDimensions r={selRoom.bounds} px={px} />
+              )}
+              {preview?.measure && <DrawDimension {...preview.measure} px={px} />}
+              {preview?.drawing && <DrawingRoom {...preview.drawing} px={px} />}
+              {sel?.kind === 'opening' && plan.openings[sel.id] && (
+                <OpeningDimensions plan={plan} id={sel.id} px={px} />
+              )}
+            </>
+          }
+          top={
+            <>
+              {preview?.guides.map((g, i) => {
+                const ext = px(24);
+                return g.axis === 'v' ? (
+                  <line
+                    key={i}
+                    x1={g.c}
+                    x2={g.c}
+                    y1={g.a - ext}
+                    y2={g.b + ext}
+                    stroke="var(--plan-guide)"
+                    strokeWidth={1}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : (
+                  <line
+                    key={i}
+                    y1={g.c}
+                    y2={g.c}
+                    x1={g.a - ext}
+                    x2={g.b + ext}
+                    stroke="var(--plan-guide)"
+                    strokeWidth={1}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                );
+              })}
+              {preview?.clearances.map((c, i) => (
+                <ClearanceLine key={i} c={c} px={px} />
+              ))}
+            </>
+          }
+        />
       </g>
     </svg>
   );
@@ -614,56 +485,6 @@ function snapAlong(p: Plan, axis: 'h' | 'v', v: number, threshold: number, grid:
 /** Where a drawn Wall starts: on a Wall's centreline when near one (so it joins it), else on the grid. */
 function snapPoint(p: Plan, q: Pt, threshold: number, grid: number): Pt {
   return { x: snapAlong(p, 'v', q.x, threshold, grid), y: snapAlong(p, 'h', q.y, threshold, grid) };
-}
-
-/** The rectangle of a stretch of Wall: its centreline span, across its faces. */
-function stretchRect(line: { axis: 'h' | 'v'; lo: number; hi: number }, t0: number, t1: number): Rect {
-  return line.axis === 'h'
-    ? { x0: t0, x1: t1, y0: line.lo, y1: line.hi }
-    : { x0: line.lo, x1: line.hi, y0: t0, y1: t1 };
-}
-
-/** Show Changes: Existing Plan Wall the Scenario removes, dashed where it was. */
-function Demolished({
-  existing,
-  demolished
-}: {
-  existing: Plan;
-  demolished: Record<string, { t0: number; t1: number }[]>;
-}) {
-  const E = derive(existing);
-  const rects = Object.entries(demolished).flatMap(([id, ss]) => {
-    const g = E.walls[id];
-    return g ? ss.map((s) => stretchRect(g.line, s.t0, s.t1)) : [];
-  });
-  return (
-    <path
-      d={rectsPath(rects)}
-      fill="var(--plan-paper)"
-      stroke="var(--plan-demolished)"
-      strokeWidth={1.25}
-      strokeDasharray="5 4"
-      vectorEffect="non-scaling-stroke"
-      pointerEvents="none"
-      data-testid="demolished"
-    />
-  );
-}
-
-/** Show Changes: the New stretches of the Scenario's Walls, highlighted. */
-function NewWalls({
-  plan,
-  walls
-}: {
-  plan: Plan;
-  walls: Record<string, { t0: number; t1: number; status: string }[]>;
-}) {
-  const D = derive(plan);
-  const rects = Object.entries(walls).flatMap(([id, ss]) => {
-    const g = D.walls[id];
-    return g ? ss.filter((s) => s.status === 'new').map((s) => stretchRect(g.line, s.t0, s.t1)) : [];
-  });
-  return <path d={rectsPath(rects)} fill="var(--plan-new)" pointerEvents="none" data-testid="new-walls" />;
 }
 
 /** The live length of a Wall being drawn. */

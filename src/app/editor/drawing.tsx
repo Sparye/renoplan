@@ -52,13 +52,16 @@ export function OpeningShape({
   o,
   line,
   selected,
-  tone
+  tone,
+  interactive = true
 }: {
   id: string;
   o: Opening;
   line: Line;
   selected: boolean;
   tone?: 'new' | 'demolished';
+  /** With a hit area for the editor canvas; without one in a read-only drawing. */
+  interactive?: boolean;
 }) {
   const P = (t: number, n: number) => point(line.axis, t, n);
   const pts = (ps: { x: number; y: number }[]) => ps.map((p) => `${p.x},${p.y}`).join(' ');
@@ -126,8 +129,8 @@ export function OpeningShape({
       </g>
     );
   return (
-    <g data-hit={`opening:${id}`}>
-      <polygon points={pts(hit)} fill="transparent" />
+    <g data-hit={interactive ? `opening:${id}` : undefined}>
+      {interactive && <polygon points={pts(hit)} fill="transparent" />}
       <polygon points={pts(cut)} fill={o.kind === 'window' ? '#f4f8fb' : 'var(--plan-paper)'} />
       {symbol}
       {selected && (
