@@ -137,4 +137,17 @@ describe('Scenario Mode', () => {
     expect(st().selection).toEqual({ kind: 'room', id: pantry });
     expect(activeApplied(st())!.statuses.rooms[pantry]).toBe('new');
   });
+
+  test('Draw Room and naming it are one Change and one undo step', () => {
+    const { p } = house();
+    const { st, act } = editor(p);
+    st().addScenario();
+    expect(act.drawRoom({ x0: 7000, y0: 5000, x1: 9900, y1: 7900 })).toBe(true);
+    const sel = st().selection;
+    expect(sel?.kind).toBe('room');
+    act.renameRoom((sel as { id: string }).id, 'Study');
+    expect(st().project.scenarios[0]!.changes).toMatchObject([{ op: 'drawRoom', name: 'Study' }]);
+    st().undo();
+    expect(st().project.scenarios[0]!.changes).toEqual([]);
+  });
 });

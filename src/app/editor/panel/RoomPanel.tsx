@@ -11,6 +11,7 @@ import {
 } from '@/core';
 import { Button } from '@/app/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
+import { NEW_ROOM } from '../actions';
 import { useActions, useEditorStore } from '../context';
 import { activeApplied, currentPlan } from '../store';
 import { TINT } from '../drawing';
@@ -41,6 +42,8 @@ export function RoomPanel({ id }: { id: RoomId }) {
     <Section title="Room" hint={`${formatArea(g.area)} m²`}>
       <NameCombobox
         aria-label="Name"
+        // A Room just drawn opens with its name ready to type over.
+        autoFocus={isNew && room.name === NEW_ROOM}
         value={draft ?? room.name}
         onChange={setDraft}
         onBlur={() => {

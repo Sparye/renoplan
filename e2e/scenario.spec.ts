@@ -94,6 +94,34 @@ test('Draw Wall divides a Room; naming the part it cuts off makes a New Room', a
   await expect(page.locator('svg text', { hasText: 'NEW' })).toHaveCount(1);
 });
 
+test('Draw Room makes a Room of part of a space: one Change, named as it is drawn', async ({ page }) => {
+  await twoRooms(page);
+  await page.getByRole('button', { name: 'New scenario' }).click();
+  const space = (await page.locator('[data-hit="space"]').boundingBox())!;
+  const spaces = await page.locator('[data-hit="space"]').count();
+
+  // A rectangle in the middle of the Unlabelled Space, nowhere near a Wall.
+  await page.keyboard.press('r');
+  const from = { x: space.x + space.width * 0.55, y: space.y + space.height * 0.55 };
+  await drag(page, from, space.width * 0.3, space.height * 0.3);
+  await expect(page.getByRole('heading', { name: /^Room/ })).toBeVisible();
+  await expect(page.getByLabel('Name', { exact: true })).toBeFocused();
+  await page.keyboard.type('Study');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('svg text', { hasText: 'Study' })).toHaveCount(1);
+  await expect(rooms(page)).toHaveCount(3);
+  // The rest of the space is still Unlabelled.
+  await expect(page.locator('[data-hit="space"]')).toHaveCount(spaces);
+
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('New room: Study')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Changes' })).toContainText('1');
+  // One undo step removes it.
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(rooms(page)).toHaveCount(2);
+});
+
 test('an existing-plan edit underneath a Scenario shows as a Conflict', async ({ page }) => {
   await twoRooms(page);
   await page.getByRole('button', { name: 'New scenario' }).click();

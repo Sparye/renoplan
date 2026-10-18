@@ -1,4 +1,5 @@
 import {
+  type Box,
   type Mm,
   type OpeningId,
   type OpeningKind,
@@ -29,12 +30,17 @@ import { type EditorStore, type Selection, currentPlan } from './store';
 // command and commits the plan; in a Scenario it is recorded as a Change (ADR 0010). Either way the
 // selection follows the element to wherever it ends up, since ids may change.
 
+/** The name a drawn Room starts with, for the user to type over. */
+export const NEW_ROOM = 'New room';
+
 export interface Actions {
   pushWall(id: WallId, delta: Mm, at: Mm, outline?: boolean): void;
   setThickness(id: WallId, thickness: Mm): void;
   /** Removes a Wall: in the Existing Plan only between two Rooms (merging them); in a Scenario, any. */
   removeWall(id: WallId): void;
   drawWall(a: Point, b: Point): boolean;
+  /** Draw Room: a New Room on a rectangle of Wall centrelines, selected so it can be named. */
+  drawRoom(rect: Box): boolean;
   addOpening(wall: WallId, kind: OpeningKind, at: Mm): void;
   removeOpening(id: OpeningId): void;
   updateOpening(id: OpeningId, patch: OpeningPatch): void;
@@ -122,6 +128,11 @@ export function actions(useEditor: EditorStore): Actions {
         const id = wallAtPoint(q, mid.x, mid.y);
         return id ? { kind: 'wall', id, at: along === 'h' ? mid.x : mid.y } : null;
       });
+    },
+    drawRoom(rect) {
+      if (!scenario()) return false;
+      const mid = { x: (rect.x0 + rect.x1) / 2, y: (rect.y0 + rect.y1) / 2 };
+      return st().record({ op: 'drawRoom', rect, name: NEW_ROOM }, roomAt(mid));
     },
     addOpening(wall, kind, at) {
       const p = plan();

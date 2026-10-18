@@ -1,5 +1,16 @@
 import { useState } from 'react';
-import { ArrowLeft, Download, Eye, EyeOff, Magnet, Maximize, PenLine, Redo2, Undo2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  Download,
+  Eye,
+  EyeOff,
+  Magnet,
+  Maximize,
+  PenLine,
+  Redo2,
+  SquarePlus,
+  Undo2
+} from 'lucide-react';
 import { serialize } from '@/persistence';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
@@ -96,6 +107,16 @@ export function Toolbar() {
               onPressedChange={(on) => setTool(on ? 'drawWall' : 'select')}
             >
               <PenLine /> Draw wall
+            </Toggle>
+          </Tip>
+          <Tip label="Draw a new room: drag a rectangle (R)">
+            <Toggle
+              size="sm"
+              aria-label="Draw room"
+              pressed={tool === 'drawRoom'}
+              onPressedChange={(on) => setTool(on ? 'drawRoom' : 'select')}
+            >
+              <SquarePlus /> Draw room
             </Toggle>
           </Tip>
           <Tip label="Show demolished walls dashed and new walls highlighted">

@@ -9,6 +9,7 @@ export function SpacePanel({ x, y }: { x: number; y: number }) {
   const useEditor = useEditorStore();
   const act = useActions();
   const plan = useEditor(currentPlan);
+  const scenario = useEditor((s) => s.mode.kind === 'scenario');
   const [name, setName] = useState('Hallway');
   const space = derive(plan).unlabelled[derive(plan).spaceAt(x, y)];
   if (!space) return null;
@@ -18,7 +19,11 @@ export function SpacePanel({ x, y }: { x: number; y: number }) {
   };
   return (
     <Section title="Unlabelled space" hint={`${formatArea(space.area)} m²`}>
-      <Hint>Space no room claims — often a hallway or cupboard nobody measured.</Hint>
+      <Hint>
+        {scenario
+          ? 'Make all of it a room here, or use Draw room (R) to make a room of just part of it.'
+          : 'Space no room claims — often a hallway or cupboard nobody measured.'}
+      </Hint>
       <form className="flex gap-1.5" onSubmit={submit}>
         <NameCombobox
           className="flex-1"

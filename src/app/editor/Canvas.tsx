@@ -10,6 +10,7 @@ import {
   applyPush,
   clearances,
   derive,
+  drawRoom,
   drawWall,
   formatArea,
   formatMetres,
@@ -23,6 +24,7 @@ import {
   usableSpan,
   wallAtPoint
 } from '@/core';
+import { NEW_ROOM } from './actions';
 import { useActions, useEditorStore } from './context';
 import { Dimension, Label, OpeningShape, TINT, rectsPath } from './drawing';
 import { type Selection, type View, activeApplied, currentPlan, shownPlan } from './store';
@@ -50,6 +52,7 @@ type Drag = DragBase &
       }
     | { kind: 'opening'; id: string; at0: Mm; at: Mm; axis: 'h' | 'v'; base: Plan }
     | { kind: 'draw'; a: Pt; b: Pt | null; base: Plan }
+    | { kind: 'drawRoom'; a: Pt; rect: Rect | null; base: Plan }
   );
 
 export function Canvas() {
@@ -137,6 +140,11 @@ export function Canvas() {
       drag.current = { ...b, kind: 'draw', a, b: null, base };
       return;
     }
+    if (st.tool === 'drawRoom') {
+      const a = snapPoint(base, p, SNAP_PX / st.view.s, st.snapStep);
+      drag.current = { ...b, kind: 'drawRoom', a, rect: null, base };
+      return;
+    }
     const [kind, id] = hit.split(':') as [string, string | undefined];
     if (kind === 'opening' && id && base.openings[id]) {
       st.select({ kind: 'opening', id });
@@ -205,6 +213,24 @@ export function Canvas() {
       const drawn = d.b ? drawWall(d.base, d.a, d.b).plan : d.base;
       const measure = d.b ? { a: d.a, b: d.b } : undefined;
       st.setPreview({ plan: drawn, guides: [], clearances: [], measure });
+    } else if (d.kind === 'drawRoom') {
+      // The corner opposite the start snaps onto Walls too, so the Room's sides land on the Walls there.
+      const b = snapPoint(d.base, p, SNAP_PX / st.view.s, st.snapStep);
+      const rect = {
+        x0: Math.min(d.a.x, b.x),
+        y0: Math.min(d.a.y, b.y),
+        x1: Math.max(d.a.x, b.x),
+        y1: Math.max(d.a.y, b.y)
+      };
+      d.rect = rect.x1 > rect.x0 && rect.y1 > rect.y0 ? rect : null;
+      const r = d.rect ? drawRoom(d.base, d.rect, NEW_ROOM) : { plan: d.base, id: null };
+      const room = r.id ? (derive(r.plan).rooms[r.id]?.bounds ?? null) : null;
+      st.setPreview({
+        plan: r.plan,
+        guides: [],
+        clearances: [],
+        drawing: d.rect ? { rect: d.rect, room } : undefined
+      });
     }
   };
 
@@ -224,6 +250,10 @@ export function Canvas() {
     }
     if (d.kind === 'draw') {
       if (!d.b || !act.drawWall(d.a, d.b)) st.setPreview(null);
+      return;
+    }
+    if (d.kind === 'drawRoom') {
+      if (!d.rect || !act.drawRoom(d.rect)) st.setPreview(null);
       return;
     }
     if (st.mode.kind === 'scenario') {
@@ -268,7 +298,7 @@ export function Canvas() {
       className="absolute inset-0 h-full w-full touch-none select-none"
       style={{
         background: 'var(--plan-paper)',
-        cursor: tool === 'drawWall' ? 'crosshair' : dragging ? 'grabbing' : 'default'
+        cursor: tool !== 'select' ? 'crosshair' : dragging ? 'grabbing' : 'default'
       }}
       onPointerDown={onDown}
       onPointerMove={onMove}
@@ -419,6 +449,7 @@ export function Canvas() {
         )}
         {selRoom?.rectangular && selRoom.bounds && !dragging && <RoomDimensions r={selRoom.bounds} px={px} />}
         {preview?.measure && <DrawDimension {...preview.measure} px={px} />}
+        {preview?.drawing && <DrawingRoom {...preview.drawing} px={px} />}
         {sel?.kind === 'opening' && plan.openings[sel.id] && (
           <OpeningDimensions plan={plan} id={sel.id} px={px} />
         )}
@@ -642,4 +673,24 @@ function DrawDimension({ a, b, px }: { a: Pt; b: Pt; px: (n: number) => number }
     axis === 'h' ? [Math.min(a.x, b.x), Math.max(a.x, b.x)] : [Math.min(a.y, b.y), Math.max(a.y, b.y)];
   const at = axis === 'h' ? a.y : a.x;
   return <Dimension axis={axis} a={t0} b={t1} at={at} offset={-px(22)} px={px} color="var(--plan-select)" />;
+}
+
+/** A Room being drawn: the rectangle, and the inside W × L of the Room it makes (red if it makes none). */
+function DrawingRoom({ rect, room, px }: { rect: Rect; room: Rect | null; px: (n: number) => number }) {
+  return (
+    <g pointerEvents="none">
+      <rect
+        x={rect.x0}
+        y={rect.y0}
+        width={rect.x1 - rect.x0}
+        height={rect.y1 - rect.y0}
+        fill="none"
+        stroke={room ? 'var(--plan-select)' : 'var(--plan-overlap)'}
+        strokeWidth={1}
+        strokeDasharray="5 4"
+        vectorEffect="non-scaling-stroke"
+      />
+      {room && <RoomDimensions r={room} px={px} />}
+    </g>
+  );
 }

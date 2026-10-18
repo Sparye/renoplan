@@ -109,7 +109,11 @@ export function ScenarioPanel() {
             <b className="text-foreground">Draw wall</b> (W) — drag to draw a new wall; Esc to stop
           </li>
           <li>
-            <b className="text-foreground">Click unlabelled space</b> — name it as a room
+            <b className="text-foreground">Draw room</b> (R) — drag a rectangle over unlabelled space, or
+            inside a room to carve one out of it
+          </li>
+          <li>
+            <b className="text-foreground">Click unlabelled space</b> — make all of it a room
           </li>
           <li>⌘Z / ⇧⌘Z undo/redo this scenario · Esc</li>
         </ul>
@@ -161,7 +165,9 @@ function Summary({ existing, result }: { existing: Plan; result: Applied }) {
 
 /** Names Rooms by Target: Existing Plan Rooms by name, Rooms the Scenario made by the name it gave them. */
 function names(existing: Plan, s: Scenario) {
-  const made = new Map(s.changes.flatMap((c) => (c.op === 'nameSpace' ? [[c.id, c.name] as const] : [])));
+  const made = new Map(
+    s.changes.flatMap((c) => (c.op === 'nameSpace' || c.op === 'drawRoom' ? [[c.id, c.name] as const] : []))
+  );
   return (t: Target | null): string | null =>
     t === null
       ? null
@@ -196,6 +202,7 @@ function describe(c: Change, name: (t: Target | null) => string | null): string 
     case 'modifyOpening':
       return c.patch.kind ? `Changed an opening to a ${OPENING[c.patch.kind]}` : 'Changed an opening';
     case 'nameSpace':
+    case 'drawRoom':
       return `New room: ${c.name}`;
     case 'renameRoom':
       return `Renamed ${name(c.room) ?? 'a room'} to ${c.name}`;

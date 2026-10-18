@@ -143,7 +143,10 @@ export function NameCombobox({
           setOpen(true);
           setActive(-1);
         }}
-        onFocus={() => setOpen(true)}
+        onFocus={(e) => {
+          setOpen(true);
+          e.currentTarget.select();
+        }}
         onBlur={() => {
           setOpen(false);
           props.onBlur?.();

@@ -9,6 +9,7 @@ import {
   type Mm,
   type OpeningId,
   type Plan,
+  type Rect,
   type RoomId,
   type Scenario,
   type WallId,
@@ -50,7 +51,7 @@ export type Selection =
 /** The editor's two Modes (CONTEXT.md): the Existing Plan, or one Scenario. */
 export type Mode = { kind: 'existing' } | { kind: 'scenario'; id: string };
 
-export type Tool = 'select' | 'drawWall';
+export type Tool = 'select' | 'drawWall' | 'drawRoom';
 
 /** screen px = mm × s + t */
 export interface View {
@@ -66,6 +67,8 @@ export interface Preview {
   clearances: Clearance[];
   /** A Wall being drawn, for its live length. */
   measure?: { a: { x: Mm; y: Mm }; b: { x: Mm; y: Mm } };
+  /** A Room being drawn: the rectangle dragged out, and the Room it makes (null if it closes nothing off). */
+  drawing?: { rect: Rect; room: Rect | null };
 }
 
 export interface EditorState {
@@ -232,7 +235,10 @@ export function createEditor(project: Project, store: ProjectStore, newId: () =>
           set({ preview: null });
           return false;
         }
-        const h = commitHistory(get().scenarios[mode.id]!, r.scenario);
+        const h0 = get().scenarios[mode.id]!;
+        // A gesture folded into the last Change (naming a Room just drawn) is part of that undo step.
+        const folded = r.scenario.changes.length === sc.changes.length;
+        const h = folded ? { ...h0, present: r.scenario, future: [] } : commitHistory(h0, r.scenario);
         const plan = applied(history.present, r.scenario).plan;
         recordScenario(mode.id, h, select ? select(plan) : get().selection);
         return true;

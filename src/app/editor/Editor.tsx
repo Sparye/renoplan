@@ -47,6 +47,8 @@ export function Editor({ project }: { project: Project }) {
         else st.select(null);
       } else if (key === 'w' && !mod && st.mode.kind === 'scenario') {
         st.setTool(st.tool === 'drawWall' ? 'select' : 'drawWall');
+      } else if (key === 'r' && !mod && st.mode.kind === 'scenario') {
+        st.setTool(st.tool === 'drawRoom' ? 'select' : 'drawRoom');
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         const s = st.selection;
         const act = actions(useEditor);
