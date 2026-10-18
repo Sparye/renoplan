@@ -286,7 +286,9 @@ export function nameSpace(p: Plan, x: number, y: number, name: string): { plan: 
     const out: [number, number][] = [];
     for (const o in D.walls) {
       const q = D.walls[o]!;
+      // In-line pieces of the same Wall overlap only by their end caps; they don't bury each other.
       if (o === wid || q.line.axis !== line.axis) continue;
+      if (q.line.c === line.c && p.walls[o]!.thickness === p.walls[wid]!.thickness) continue;
       const [lo, hi, s, e] =
         line.axis === 'v'
           ? [q.rect.x0, q.rect.x1, q.rect.y0, q.rect.y1]
