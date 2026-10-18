@@ -5,7 +5,7 @@ import { normalizePlan } from '../normalize';
 import { size, valid, wallAt } from '../test/helpers';
 import { addOutline } from './outline';
 import { addRoom } from './rooms';
-import { deleteRoom, moveRoom, nameSpace, setRoomSize } from './rooms';
+import { deleteRoom, drawRoom, moveRoom, nameSpace, setRoomSize } from './rooms';
 import { drawWall, preparePush, pushWall, runSides, setStructural, setWallThickness } from './walls';
 
 /** Outline 10 × 8 m; A and B side by side in the top-left, both against the top exterior wall. */
@@ -273,5 +273,39 @@ describe('drawWall', () => {
   ])('refuses %s', (_, a, b, t) => {
     const { p } = house();
     expect(drawWall(p, a, b, t)).toEqual({ plan: p, id: null });
+  });
+});
+
+describe('drawRoom', () => {
+  test('in open floor: four new Walls around the rectangle, and the floor inside them is the Room', () => {
+    const { p } = house();
+    const r = drawRoom(p, { x0: 6000, y0: 5000, x1: 8000, y1: 7000 }, 'Study');
+    const q = valid(r.plan);
+    expect(q.rooms[r.id!]).toMatchObject({ name: 'Study' });
+    expect(derive(q).rooms[r.id!]!.bounds).toEqual({ x0: 6050, y0: 5050, x1: 7950, y1: 6950 });
+    expect(Object.values(q.walls).filter((w) => w.drawn)).toHaveLength(4);
+  });
+
+  test('along existing Walls only the missing sides are drawn', () => {
+    const { p } = house();
+    // The bottom-right inside corner of the Outline: its right and bottom Walls are already there.
+    const r = drawRoom(p, { x0: 7000, y0: 5000, x1: 9900, y1: 7900 }, 'Study');
+    const q = valid(r.plan);
+    expect(derive(q).rooms[r.id!]!.bounds).toEqual({ x0: 7050, y0: 5050, x1: 9800, y1: 7800 });
+    expect(Object.values(q.walls).filter((w) => w.drawn)).toHaveLength(2);
+  });
+
+  test('inside a Room it carves the new Room out, and the Room keeps the rest even if smaller', () => {
+    const { p, a } = house();
+    // A is 3 × 4 m at x 200–3200; the new Room takes everything right of x = 1200.
+    const r = drawRoom(p, { x0: 1200, y0: 100, x1: 3250, y1: 4250 }, 'Ensuite');
+    const q = valid(r.plan);
+    expect(derive(q).rooms[r.id!]!.bounds).toEqual({ x0: 1250, y0: 200, x1: 3200, y1: 4200 });
+    expect(derive(q).rooms[a]!.bounds).toEqual({ x0: 200, y0: 200, x1: 1150, y1: 4200 });
+  });
+
+  test('a rectangle smaller than a Room can be does nothing', () => {
+    const { p } = house();
+    expect(drawRoom(p, { x0: 6000, y0: 5000, x1: 6200, y1: 7000 }, 'Cupboard').id).toBeNull();
   });
 });

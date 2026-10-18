@@ -35,6 +35,7 @@ import {
   recordChange
 } from './scenario';
 import { type Stretch, union } from './scenario/status';
+import { planBounds } from './queries';
 import { snapMove } from './snap';
 
 // Random capture sessions: every command keeps the plan valid, and commands that promise not to move
@@ -282,6 +283,16 @@ const gesture = fc.oneof(
     })
   },
   { weight: 2, arbitrary: fc.record({ k: fc.constant('name' as const), i: fc.nat() }) },
+  {
+    weight: 2,
+    arbitrary: fc.record({
+      k: fc.constant('room' as const),
+      fx: fc.double({ min: 0, max: 1, noNaN: true }),
+      fy: fc.double({ min: 0, max: 1, noNaN: true }),
+      w: len(300, 5000),
+      l: len(300, 5000)
+    })
+  },
   { weight: 1, arbitrary: fc.record({ k: fc.constant('rename' as const), i: fc.nat() }) }
 );
 type G = typeof gesture extends fc.Arbitrary<infer T> ? T : never;
@@ -303,6 +314,14 @@ function toGesture(p: Plan, g: G): Gesture | null {
     case 'demolish': {
       const w = pick(walls, g.i);
       return w ? { op: 'demolishWall', wall: w } : null;
+    }
+    case 'room': {
+      // A rectangle anywhere over the plan, on the 50 mm grid.
+      const b = planBounds(p);
+      if (!b) return null;
+      const x0 = Math.round((b.x0 + g.fx * (b.x1 - b.x0)) / 50) * 50;
+      const y0 = Math.round((b.y0 + g.fy * (b.y1 - b.y0)) / 50) * 50;
+      return { op: 'drawRoom', rect: { x0, y0, x1: x0 + g.w, y1: y0 + g.l }, name: 'Den' };
     }
     case 'draw': {
       const w = pick(walls, g.i);
@@ -448,6 +467,13 @@ const zeroMoveKeepsAreas = (p: Plan, i: number) => {
   const r = pick(Object.keys(p.rooms), i)!;
   expect(areas(moveRoom(p, r, 0, 0))).toEqual(areas(p));
 };
+/** The move happens (the soundness check doesn't refuse it) and keeps every area. */
+const movesKeepingAreas = (p: Plan, i: number, dx: number, dy: number) => {
+  const r = pick(Object.keys(p.rooms), i)!;
+  const q = moveRoom(p, r, dx, dy);
+  expect(q).not.toBe(p);
+  expect(areas(q)).toEqual(areas(p));
+};
 
 test.fails("end cap A: a Room bounded by a thick Wall's end cap keeps its area on a zero move", () => {
   const p = replay([
@@ -462,31 +488,31 @@ test.fails("end cap A: a Room bounded by a thick Wall's end cap keeps its area o
 });
 
 test.fails('end cap B: a merged Room crossing the Outline keeps its area on a 50 mm move', () => {
-  replay([
+  const p = replay([
     { k: 'outline', w: 6000, l: 5000 },
     { k: 'add', w: 600, l: 600 },
     { k: 'push', i: 103677491, d: 2250, outline: false },
     { k: 'name', i: 0 },
     { k: 'size', i: 0, w: 300, l: 750 },
-    { k: 'merge', i: 0 },
-    { k: 'move', i: 0, dx: 0, dy: -50, snap: false }
+    { k: 'merge', i: 0 }
   ]);
+  movesKeepingAreas(p, 0, 0, -50);
 });
 
 test.fails('end cap E: a merged Room across a right wing keeps its area on a 50 mm move', () => {
-  replay([
+  const p = replay([
     { k: 'add', w: 600, l: 600 },
     { k: 'outline', w: 6000, l: 5000 },
     { k: 'name', i: 0 },
     { k: 'wing', side: 'right', w: 1500, l: 1500 },
     { k: 'move', i: 0, dx: -2200, dy: 750, snap: false },
-    { k: 'merge', i: 0 },
-    { k: 'move', i: 0, dx: 0, dy: -50, snap: false }
+    { k: 'merge', i: 0 }
   ]);
+  movesKeepingAreas(p, 0, 0, -50);
 });
 
 test.fails('merge then move never leaves a Room on both faces of a Wall', () => {
-  replay([
+  const p = replay([
     { k: 'outline', w: 6000, l: 5000 },
     { k: 'name', i: 0 },
     { k: 'add', w: 600, l: 600 },
@@ -494,9 +520,9 @@ test.fails('merge then move never leaves a Room on both faces of a Wall', () => 
     { k: 'move', i: 1871132627, dx: -1150, dy: 0, snap: true },
     { k: 'push', i: 734491472, d: -50, outline: false },
     { k: 'move', i: 0, dx: 1700, dy: -250, snap: true },
-    { k: 'merge', i: 79485247 },
-    { k: 'move', i: 0, dx: 0, dy: 50, snap: false }
+    { k: 'merge', i: 79485247 }
   ]);
+  movesKeepingAreas(p, 0, 0, 50);
 });
 
 test('a Scenario replays soundly over any later Existing Plan edits', () => {
@@ -532,6 +558,7 @@ test('a Scenario replays soundly over any later Existing Plan edits', () => {
       'drawWall',
       'modifyOpening',
       'nameSpace',
+      'drawRoom',
       'pushWall',
       'removeOpening',
       'renameRoom',
@@ -590,8 +617,11 @@ test('harmless Existing Plan edits never make a Change conflict', () => {
         } else if (h.k === 'room') {
           const a = addRoom(e0, { name: 'Shed', w: h.w, l: h.l });
           // A new Room is parked clear of the Existing Plan, but a Scenario may have drawn out there: the
-          // edit is harmless only if the Room lands clear of every Wall the Scenario has at any step.
-          if (!a.id || !clear([derive(a.plan).rooms[a.id]!.bounds!], all, 300)) return;
+          // edit is harmless only if the Room lands clear of every Wall the Scenario has at any step, and
+          // of every Room it drew.
+          const drawnRooms = s.changes.flatMap((c) => (c.op === 'drawRoom' ? [c.rect] : []));
+          const shed = [derive(a.plan).rooms[a.id!]?.bounds ?? null].filter((b) => b !== null);
+          if (!a.id || !clear(shed, all, 300) || !clear(shed, drawnRooms, 300)) return;
           e1 = a.plan;
         } else if (h.k === 'opening') {
           const w = pick(Object.keys(e0.walls), h.i);

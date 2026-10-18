@@ -80,6 +80,11 @@ const Change = Schema.Union([
     })
   }),
   change('nameSpace', { x: Mm, y: Mm, name: Schema.String }),
+  change('drawRoom', {
+    rect: Schema.Struct({ x0: Mm, y0: Mm, x1: Mm, y1: Mm }),
+    name: Schema.String,
+    thickness: Mm.check(Schema.isGreaterThanOrEqualTo(1))
+  }),
   change('renameRoom', { room: Target, name: Schema.String }),
   change('setRoomType', { room: Target, type: RoomType })
 ]);

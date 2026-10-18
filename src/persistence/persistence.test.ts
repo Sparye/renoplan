@@ -30,6 +30,7 @@ function sample(): Project {
   step({ op: 'addOpening', wall: drawn, kind: 'opening', center: 1000 });
   const o = Object.keys(applyScenario(p, s).plan.openings).find((id) => !p.openings[id])!;
   step({ op: 'modifyOpening', opening: o, patch: { width: 700 } });
+  step({ op: 'drawRoom', rect: { x0: 6000, y0: 5000, x1: 9900, y1: 7900 }, name: 'Garage' });
   return {
     id: 'p1',
     name: 'Home',
@@ -82,7 +83,13 @@ describe('document', () => {
     const r = parse(serialize(project));
     if (!r.ok) throw new Error(r.error);
     const [s] = r.project.scenarios;
-    expect(s!.changes.map((c) => c.op)).toEqual(['renameRoom', 'drawWall', 'addOpening', 'modifyOpening']);
+    expect(s!.changes.map((c) => c.op)).toEqual([
+      'renameRoom',
+      'drawWall',
+      'addOpening',
+      'modifyOpening',
+      'drawRoom'
+    ]);
     expect(s!.changes[3]).toMatchObject({ opening: { created: s!.changes[2]!.id } });
     const before = applyScenario(project.existingPlan, project.scenarios[0]!);
     const after = applyScenario(r.project.existingPlan, s!);

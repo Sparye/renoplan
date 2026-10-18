@@ -193,7 +193,9 @@ export function drawWall(
   p: Plan,
   a: { x: Mm; y: Mm },
   b: { x: Mm; y: Mm },
-  thickness: Mm = p.defaults.interior
+  thickness: Mm = p.defaults.interior,
+  /** A point the Room it divides should give up, if it can (see drawRoom). */
+  away?: { x: Mm; y: Mm }
 ): { plan: Plan; id: WallId | null } {
   const [ax, ay, bx, by] = [a.x, a.y, b.x, b.y].map(Math.round) as [Mm, Mm, Mm, Mm];
   const t = Math.round(thickness);
@@ -236,16 +238,16 @@ export function drawWall(
       };
       if (!longest || s1 - s0 > longest[1]) longest = [id, s1 - s0];
     }
-    splitDivided(d);
+    splitDivided(d, away);
     return longest![0];
   });
 }
 
 /**
- * A Room that drawn Walls divide into separate parts keeps the largest part. The rest stops being the
- * Room's and shows as Unlabelled Space, for the user to name.
+ * A Room that drawn Walls divide into separate parts keeps the largest part (the largest without `away`,
+ * if there is one). The rest stops being the Room's and shows as Unlabelled Space, for the user to name.
  */
-function splitDivided(d: Plan) {
+function splitDivided(d: Plan, away?: { x: Mm; y: Mm }) {
   const drawn = Object.keys(d.walls)
     .filter((id) => d.walls[id]!.drawn)
     .map((id) => materialRect(d, id));
@@ -271,7 +273,9 @@ function splitDivided(d: Plan) {
       parts.push({ mask, area });
     }
     if (parts.length < 2) continue;
-    const keep = parts.reduce((a, b) => (b.area > a.area ? b : a));
+    const at = away && g.cellAt(away.x, away.y);
+    const elsewhere = parts.filter((q) => at === undefined || at < 0 || !q.mask[at]);
+    const keep = (elsewhere.length ? elsewhere : parts).reduce((a, b) => (b.area > a.area ? b : a));
     reclaim(
       d,
       room,

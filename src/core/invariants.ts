@@ -105,6 +105,7 @@ export function isSound(p: Plan): boolean {
   const D = derive(p);
   if (Object.values(D.rooms).some((r) => !r.area)) return false;
   if (!D.outline && Object.values(p.walls).some((w) => w.exterior)) return false;
+  if (Object.values(p.walls).some((w) => w.neg && w.neg === w.pos)) return false;
   let rects: Map<string, ReturnType<typeof materialRect>> | null = null;
   for (const [id, w] of Object.entries(p.walls))
     for (const side of ['neg', 'pos'] as const) {

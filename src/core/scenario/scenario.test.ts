@@ -423,9 +423,9 @@ describe('Conflicts', () => {
       () => ({ op: 'drawWall', a: { x: 8500, y: 100 }, b: { x: 8500, y: 7900 } }),
       () => ({ op: 'nameSpace', x: 9200, y: 4000, name: 'Studio' }),
       (q) => ({
-        op: 'renameRoom',
+        op: 'setRoomType',
         room: Object.keys(q.rooms).find((id) => q.rooms[id]!.name === 'Studio')!,
-        name: 'Office'
+        type: 'bedroom'
       })
     );
     expect(s.changes[2]).toMatchObject({ room: { created: 'c2' } });
@@ -560,6 +560,50 @@ describe('replay', () => {
     const { p, k } = house();
     const s = scenario(p, () => ({ op: 'renameRoom', room: k, name: 'Galley' }));
     expect(applyScenario(p, s).plan).toBe(applyScenario(p, s).plan);
+  });
+});
+
+describe('Draw Room', () => {
+  test('one Change makes the Room; naming it straight away changes that Change', () => {
+    const { p } = house();
+    let s = scenario(p, () => ({
+      op: 'drawRoom',
+      rect: { x0: 7000, y0: 5000, x1: 9900, y1: 7900 },
+      name: 'Room'
+    }));
+    const made = applyScenario(p, s);
+    const id = Object.keys(made.plan.rooms).find((r) => !p.rooms[r])!;
+    expect(made.statuses.rooms[id]).toBe('new');
+    s = recordChange(p, s, { op: 'renameRoom', room: id, name: 'Study' })!.scenario;
+    expect(s.changes).toHaveLength(1);
+    expect(s.changes[0]).toMatchObject({ op: 'drawRoom', name: 'Study' });
+    expect(Object.values(fresh(p, s).plan.rooms).map((r) => r.name)).toContain('Study');
+    // Any other Change in between, and a rename is its own Change again.
+    s = scenario(p, () => ({
+      op: 'drawRoom',
+      rect: { x0: 7000, y0: 5000, x1: 9900, y1: 7900 },
+      name: 'Room'
+    }));
+    s = recordChange(p, s, { op: 'drawWall', a: { x: 6000, y: 1000 }, b: { x: 6000, y: 3000 } })!.scenario;
+    s = recordChange(p, s, { op: 'renameRoom', room: id, name: 'Study' })!.scenario;
+    expect(s.changes.map((c) => c.op)).toEqual(['drawRoom', 'drawWall', 'renameRoom']);
+  });
+
+  test('a drawn Room follows the Existing Plan: carved out of a Room captured there later', () => {
+    const { p } = house();
+    const s = scenario(p, () => ({
+      op: 'drawRoom',
+      rect: { x0: 7000, y0: 5000, x1: 9900, y1: 7900 },
+      name: 'Study'
+    }));
+    // The user captures that corner as a Room in the Existing Plan; the Scenario now carves Study out of it.
+    const e = valid(nameSpace(p, 8000, 6000, 'Garage').plan);
+    const r = applyScenario(e, s);
+    valid(r.plan);
+    expect(r.conflicts).toEqual([]);
+    expect(Object.values(r.plan.rooms).map((x) => x.name)).toEqual(
+      expect.arrayContaining(['Garage', 'Study'])
+    );
   });
 });
 

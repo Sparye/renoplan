@@ -47,12 +47,21 @@ export type Gesture =
   | { op: 'removeOpening'; opening: OpeningId }
   | { op: 'modifyOpening'; opening: OpeningId; patch: OpeningPatch }
   | { op: 'nameSpace'; x: Mm; y: Mm; name: string }
+  /** A Room on a rectangle of Wall centrelines (drawRoom). */
+  | { op: 'drawRoom'; rect: Box; name: string; thickness?: Mm }
   | { op: 'renameRoom'; room: RoomId; name: string }
   | { op: 'setRoomType'; room: RoomId; type: RoomType };
 
 export interface Point {
   x: Mm;
   y: Mm;
+}
+
+export interface Box {
+  x0: Mm;
+  y0: Mm;
+  x1: Mm;
+  y1: Mm;
 }
 
 /** A gesture as stored: its targets are WallRefs and Targets, so it survives Existing Plan edits. */
@@ -70,6 +79,7 @@ export type Change = { id: ChangeId } & (
   | { op: 'removeOpening'; opening: Target }
   | { op: 'modifyOpening'; opening: Target; patch: OpeningPatch }
   | { op: 'nameSpace'; x: Mm; y: Mm; name: string }
+  | { op: 'drawRoom'; rect: Box; name: string; thickness: Mm }
   | { op: 'renameRoom'; room: Target; name: string }
   | { op: 'setRoomType'; room: Target; type: RoomType }
 );
@@ -95,6 +105,7 @@ export function changeKind(c: Pick<Change, 'op'>): ChangeKind {
     case 'drawWall':
     case 'addOpening':
     case 'nameSpace':
+    case 'drawRoom':
       return 'new';
     case 'pushWall':
     case 'setThickness':

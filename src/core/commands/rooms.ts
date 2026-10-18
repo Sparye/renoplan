@@ -20,7 +20,7 @@ import { guessRoomType } from '../roomType';
 import type { Mm } from '../units';
 import { detachRoom } from './detach';
 import { create, edit, finish } from './edit';
-import { MIN_ROOM } from './walls';
+import { MIN_ROOM, drawWall } from './walls';
 
 /** Rooms are parked in rows this far to the right of the Outline, this far apart. */
 const PARK_OFFSET: Mm = 2000;
@@ -306,4 +306,43 @@ export function nameSpace(p: Plan, x: number, y: number, name: string): { plan: 
   });
   if (!result.id || !(derive(result.plan).rooms[result.id]?.area ?? 0)) return { plan: p, id: null };
   return result;
+}
+
+/**
+ * Draw Room: a Room on a rectangle of Wall centrelines. New drawn Walls go along its sides wherever there
+ * is no Wall yet, and the floor they close off becomes the Room. Drawn inside a Room, it carves the new
+ * Room out of it, and that Room keeps the rest. A no-op unless the rectangle closes off a space.
+ */
+export function drawRoom(
+  p: Plan,
+  r: Rect,
+  name: string,
+  thickness: Mm = p.defaults.interior
+): { plan: Plan; id: RoomId | null } {
+  const [x0, x1] = [Math.round(Math.min(r.x0, r.x1)), Math.round(Math.max(r.x0, r.x1))];
+  const [y0, y1] = [Math.round(Math.min(r.y0, r.y1)), Math.round(Math.max(r.y0, r.y1))];
+  if (x1 - x0 < MIN_ROOM || y1 - y0 < MIN_ROOM) return { plan: p, id: null };
+  const mid = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+  let q = p;
+  for (const [a, b] of [
+    [
+      { x: x0, y: y0 },
+      { x: x1, y: y0 }
+    ],
+    [
+      { x: x1, y: y0 },
+      { x: x1, y: y1 }
+    ],
+    [
+      { x: x0, y: y1 },
+      { x: x1, y: y1 }
+    ],
+    [
+      { x: x0, y: y0 },
+      { x: x0, y: y1 }
+    ]
+  ] as const)
+    q = drawWall(q, a, b, thickness, mid).plan;
+  const n = nameSpace(q, mid.x, mid.y, name);
+  return n.id ? n : { plan: p, id: null };
 }

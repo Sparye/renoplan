@@ -266,6 +266,8 @@ function mergeable(p: Plan, n: NodeId, i: WallId, j: WallId, rects: () => Map<Wa
     if (!bare || !faceCovered(p, bare, side, rects())) return null;
     merged[side] = x[side] ?? y[side];
   }
+  // One Room on both faces of a Wall is never right, even where each piece had it on one face only.
+  if (merged.neg && merged.neg === merged.pos) return null;
   return { lo, hi, ...merged };
 }
 

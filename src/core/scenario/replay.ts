@@ -1,6 +1,7 @@
 import {
   addOpening,
   deleteOpening,
+  drawRoom,
   drawWall,
   mergeRooms,
   moveOpening,
@@ -158,6 +159,10 @@ function run(p: Plan, c: Change, lookup: Lookup): Outcome {
       const res = nameSpace(p, c.x, c.y, c.name);
       return { plan: res.plan, created: res.id };
     }
+    case 'drawRoom': {
+      const res = drawRoom(p, c.rect, c.name, c.thickness);
+      return { plan: res.plan, created: res.id };
+    }
     case 'renameRoom':
       return room(c.room, (id) => renameRoom(p, id, c.name));
     case 'setRoomType':
@@ -255,6 +260,8 @@ export function recordChange(
   const id = `c${s.nextId}`;
   const change = toChange(existing, r, g, id);
   if (!change) return null;
+  const folded = foldName(existing, s, r, change);
+  if (folded) return folded;
   const out = applyChange(r.plan, change, r.created);
   if ('conflict' in out || unchanged(r.plan, out.plan)) return null;
   const scenario: Scenario = { ...s, changes: [...s.changes, change], nextId: s.nextId + 1 };
@@ -262,6 +269,25 @@ export function recordChange(
   if (out.created) created.set(id, out.created);
   remember(existing, scenario, { plan: out.plan, conflicts: r.conflicts, created });
   return { scenario, id };
+}
+
+/**
+ * Naming the Room the last Change just made changes that Change instead of adding a rename, so drawing a
+ * Room and then typing its name is one Change and one undo step.
+ */
+function foldName(
+  existing: Plan,
+  s: Scenario,
+  r: Replay,
+  c: Change
+): { scenario: Scenario; id: ChangeId } | null {
+  const last = s.changes[s.changes.length - 1];
+  if (c.op !== 'renameRoom' || typeof c.room === 'string' || !last || c.room.created !== last.id) return null;
+  if (last.op !== 'nameSpace' && last.op !== 'drawRoom') return null;
+  const scenario: Scenario = { ...s, changes: [...s.changes.slice(0, -1), { ...last, name: c.name }] };
+  const next = replayed(existing, scenario);
+  if (next.conflicts.length > r.conflicts.length || unchanged(r.plan, next.plan)) return null;
+  return { scenario, id: last.id };
 }
 
 /** Turns the UI's ids into what a Change stores: WallRefs for Walls, Targets for Rooms and Openings. */
@@ -315,6 +341,16 @@ function toChange(existing: Plan, r: Replay, g: Gesture, id: ChangeId): Change |
     }
     case 'nameSpace':
       return { id, op: g.op, x: Math.round(g.x), y: Math.round(g.y), name: g.name };
+    case 'drawRoom': {
+      const { x0, y0, x1, y1 } = g.rect;
+      const rect = {
+        x0: Math.round(Math.min(x0, x1)),
+        y0: Math.round(Math.min(y0, y1)),
+        x1: Math.round(Math.max(x0, x1)),
+        y1: Math.round(Math.max(y0, y1))
+      };
+      return { id, op: g.op, rect, name: g.name, thickness: Math.round(g.thickness ?? p.defaults.interior) };
+    }
     case 'renameRoom': {
       const t = room(g.room);
       return t === null ? null : { id, op: g.op, room: t, name: g.name };
