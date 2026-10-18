@@ -43,17 +43,22 @@ export function Label(props: {
   );
 }
 
-/** A door, window or plain opening cut into its Wall. */
+/**
+ * A door, window or plain opening cut into its Wall. Under Show Changes a New one is drawn in the New
+ * colour, and a Demolished one dashed where it was, without a hit area.
+ */
 export function OpeningShape({
   id,
   o,
   line,
-  selected
+  selected,
+  tone
 }: {
   id: string;
   o: Opening;
   line: Line;
   selected: boolean;
+  tone?: 'new' | 'demolished';
 }) {
   const P = (t: number, n: number) => point(line.axis, t, n);
   const pts = (ps: { x: number; y: number }[]) => ps.map((p) => `${p.x},${p.y}`).join(' ');
@@ -62,8 +67,14 @@ export function OpeningShape({
   const t1 = o.at + o.width;
   const cut = [P(t0, lo), P(t1, lo), P(t1, hi), P(t0, hi)];
   const stroke = {
-    stroke: 'var(--plan-wall)',
+    stroke:
+      tone === 'new'
+        ? 'var(--plan-new)'
+        : tone === 'demolished'
+          ? 'var(--plan-demolished)'
+          : 'var(--plan-wall)',
     strokeWidth: 1.25,
+    strokeDasharray: tone === 'demolished' ? '4 3' : undefined,
     vectorEffect: 'non-scaling-stroke' as const,
     fill: 'none'
   };
@@ -107,6 +118,13 @@ export function OpeningShape({
   }
   const reach = o.kind === 'door' ? o.width : 150;
   const hit = [P(t0, lo - reach), P(t1, lo - reach), P(t1, hi + reach), P(t0, hi + reach)];
+  if (tone === 'demolished')
+    return (
+      <g pointerEvents="none">
+        <polygon points={pts(cut)} {...stroke} />
+        {symbol}
+      </g>
+    );
   return (
     <g data-hit={`opening:${id}`}>
       <polygon points={pts(hit)} fill="transparent" />

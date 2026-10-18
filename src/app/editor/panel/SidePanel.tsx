@@ -1,16 +1,19 @@
 import { useEditorStore } from '../context';
+import { currentPlan } from '../store';
 import { AddRoomForm } from './AddRoomForm';
 import { OpeningPanel } from './OpeningPanel';
 import { PlanPanel } from './PlanPanel';
 import { RoomPanel } from './RoomPanel';
+import { ScenarioPanel } from './ScenarioPanel';
 import { SpacePanel } from './SpacePanel';
 import { WallPanel } from './WallPanel';
 
 export function SidePanel() {
   const useEditor = useEditorStore();
   const selection = useEditor((s) => s.selection);
-  const plan = useEditor((s) => s.history.present);
-  let body = <PlanPanel />;
+  const plan = useEditor(currentPlan);
+  const scenario = useEditor((s) => (s.mode.kind === 'scenario' ? s.mode.id : null));
+  let body = scenario ? <ScenarioPanel /> : <PlanPanel />;
   if (selection?.kind === 'room' && plan.rooms[selection.id])
     body = <RoomPanel key={selection.id} id={selection.id} />;
   else if (selection?.kind === 'wall' && plan.walls[selection.id])
@@ -24,7 +27,7 @@ export function SidePanel() {
       className="bg-background relative z-10 flex w-80 shrink-0 flex-col overflow-y-auto border-l"
       aria-label="Side panel"
     >
-      <AddRoomForm />
+      {!scenario && <AddRoomForm />}
       {body}
     </aside>
   );

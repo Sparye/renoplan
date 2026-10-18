@@ -1,23 +1,16 @@
-import {
-  OPENING_PRESETS,
-  type OpeningId,
-  type OpeningKind,
-  deleteOpening,
-  moveOpening,
-  updateOpening,
-  usableSpan
-} from '@/core';
+import { OPENING_PRESETS, type OpeningId, type OpeningKind, usableSpan } from '@/core';
 import { Button } from '@/app/components/ui/button';
 import { ToggleGroup, ToggleGroupItem } from '@/app/components/ui/toggle-group';
-import { useEditorStore } from '../context';
+import { useActions, useEditorStore } from '../context';
+import { currentPlan } from '../store';
 import { Hint, LengthField, Section } from './fields';
 
 const NAMES: Record<OpeningKind, string> = { door: 'Door', window: 'Window', opening: 'Opening' };
 
 export function OpeningPanel({ id }: { id: OpeningId }) {
   const useEditor = useEditorStore();
-  const plan = useEditor((s) => s.history.present);
-  const commit = useEditor((s) => s.commit);
+  const act = useActions();
+  const plan = useEditor(currentPlan);
   const o = plan.openings[id]!;
   const [u0, u1] = usableSpan(plan, o.wall);
   return (
@@ -27,7 +20,7 @@ export function OpeningPanel({ id }: { id: OpeningId }) {
         variant="outline"
         size="sm"
         value={o.kind}
-        onValueChange={(k) => k && commit(updateOpening(plan, id, { kind: k as OpeningKind }))}
+        onValueChange={(k) => k && act.updateOpening(id, { kind: k as OpeningKind })}
         aria-label="Kind"
       >
         {(Object.keys(NAMES) as OpeningKind[]).map((k) => (
@@ -43,7 +36,7 @@ export function OpeningPanel({ id }: { id: OpeningId }) {
           variant="outline"
           size="sm"
           value={String(o.width)}
-          onValueChange={(w) => w && commit(updateOpening(plan, id, { width: Number(w) }))}
+          onValueChange={(w) => w && act.updateOpening(id, { width: Number(w) })}
           aria-label="Width preset"
         >
           {OPENING_PRESETS[o.kind].map((w) => (
@@ -56,7 +49,7 @@ export function OpeningPanel({ id }: { id: OpeningId }) {
           unit="mm"
           aria-label="Custom width"
           value={o.width}
-          onCommit={(width) => commit(updateOpening(plan, id, { width }))}
+          onCommit={(width) => act.updateOpening(id, { width })}
         />
       </div>
       <h3 className="text-muted-foreground text-xs font-medium">Position</h3>
@@ -64,7 +57,7 @@ export function OpeningPanel({ id }: { id: OpeningId }) {
         <LengthField
           aria-label="From the start corner"
           value={o.at - u0}
-          onCommit={(d) => commit(moveOpening(plan, id, u0 + d))}
+          onCommit={(d) => act.updateOpening(id, { at: u0 + d })}
         />
         <span className="text-muted-foreground text-xs">from one corner,</span>
         <span className="text-xs tabular-nums">{((u1 - o.at - o.width) / 1000).toFixed(2)} m</span>
@@ -75,26 +68,21 @@ export function OpeningPanel({ id }: { id: OpeningId }) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => commit(updateOpening(plan, id, { swing: o.swing === 'neg' ? 'pos' : 'neg' }))}
+            onClick={() => act.updateOpening(id, { swing: o.swing === 'neg' ? 'pos' : 'neg' })}
           >
             Flip side
           </Button>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => commit(updateOpening(plan, id, { hinge: o.hinge === 'start' ? 'end' : 'start' }))}
+            onClick={() => act.updateOpening(id, { hinge: o.hinge === 'start' ? 'end' : 'start' })}
           >
             Flip hinge
           </Button>
         </div>
       )}
       <Hint>Drag it along the wall. The blue numbers are the distances to the corners.</Hint>
-      <Button
-        variant="outline"
-        size="sm"
-        className="text-destructive"
-        onClick={() => commit(deleteOpening(plan, id), null)}
-      >
+      <Button variant="outline" size="sm" className="text-destructive" onClick={() => act.removeOpening(id)}>
         Delete {NAMES[o.kind].toLowerCase()}
       </Button>
     </Section>

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { ArrowLeft, Download, Magnet, Maximize, Redo2, Undo2 } from 'lucide-react';
+import { ArrowLeft, Download, Eye, EyeOff, Magnet, Maximize, PenLine, Redo2, Undo2 } from 'lucide-react';
 import { serialize } from '@/persistence';
 import { Button } from '@/app/components/ui/button';
 import { Input } from '@/app/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/app/components/ui/select';
 import { Separator } from '@/app/components/ui/separator';
+import { Toggle } from '@/app/components/ui/toggle';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { download, fileName } from '../files';
 import { go } from '../router';
@@ -25,10 +26,14 @@ function Tip({ label, children }: { label: string; children: React.ReactElement 
 export function Toolbar() {
   const useEditor = useEditorStore();
   const project = useEditor((s) => s.project);
-  const canUndo = useEditor((s) => s.history.past.length > 0);
-  const canRedo = useEditor((s) => s.history.future.length > 0);
+  const history = useEditor((s) => (s.mode.kind === 'scenario' ? s.scenarios[s.mode.id] : s.history));
+  const canUndo = !!history?.past.length;
+  const canRedo = !!history?.future.length;
   const snapStep = useEditor((s) => s.snapStep);
-  const { undo, redo, fit, rename, setSnapStep } = useEditor.getState();
+  const scenario = useEditor((s) => (s.mode.kind === 'scenario' ? s.mode.id : null));
+  const tool = useEditor((s) => s.tool);
+  const showChanges = useEditor((s) => !!scenario && !s.changesHidden[scenario]);
+  const { undo, redo, fit, rename, setSnapStep, setTool, toggleChanges } = useEditor.getState();
   const [draft, setDraft] = useState<string | null>(null);
 
   return (
@@ -80,6 +85,26 @@ export function Toolbar() {
           ))}
         </SelectContent>
       </Select>
+      {scenario && (
+        <>
+          <Separator orientation="vertical" className="mx-1 h-5" />
+          <Tip label="Draw a new wall (W)">
+            <Toggle
+              size="sm"
+              aria-label="Draw wall"
+              pressed={tool === 'drawWall'}
+              onPressedChange={(on) => setTool(on ? 'drawWall' : 'select')}
+            >
+              <PenLine /> Draw wall
+            </Toggle>
+          </Tip>
+          <Tip label="Show demolished walls dashed and new walls highlighted">
+            <Toggle size="sm" aria-label="Show changes" pressed={showChanges} onPressedChange={toggleChanges}>
+              {showChanges ? <Eye /> : <EyeOff />} Changes
+            </Toggle>
+          </Tip>
+        </>
+      )}
       <Separator orientation="vertical" className="mx-1 h-5" />
       <Tip label="Save a copy as a file">
         <Button
