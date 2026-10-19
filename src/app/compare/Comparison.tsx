@@ -1,12 +1,21 @@
-import { type PointerEvent as ReactPointerEvent, useEffect, useRef } from 'react';
+import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
 import { FileDown, Maximize, ZoomIn, ZoomOut } from 'lucide-react';
 import { Button } from '@/app/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/app/components/ui/dropdown-menu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
 import { Separator } from '@/app/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
 import { useEditorStore } from '../editor/context';
 import { PlanDrawing } from '../editor/PlanDrawing';
 import { type Mode, type View, comparedApplied } from '../editor/store';
+import { type ExportFormat, exportSheet } from '../export';
+import { comparisonSheet } from '../export/comparison';
+import { exportName } from '../files';
 
 /** Zooms by a factor about a point on screen, within the editor's zoom range. */
 function zoomAt(v: View, mx: number, my: number, factor: number): View {
@@ -31,6 +40,21 @@ export function Comparison() {
   useEffect(() => {
     requestAnimationFrame(() => useEditor.getState().fitCompare());
   }, [useEditor]);
+
+  const [exporting, setExporting] = useState(false);
+  const exportComparison = async (format: ExportFormat) => {
+    const sheet = comparisonSheet(useEditor.getState());
+    if (!sheet) return;
+    setExporting(true);
+    try {
+      await exportSheet(sheet, format, exportName(sheet.project, sheet.title, format));
+    } catch (e) {
+      console.error(e);
+      window.alert(`Could not export: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const zoom = (factor: number) => {
     const { size } = useEditor.getState().compare!;
@@ -57,16 +81,19 @@ export function Comparison() {
           </Button>
         </Tip>
         <div className="flex-1" />
-        {/* EXPORT: the coordinator wires "Export comparison" here once the Export feature lands. */}
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled
-          aria-label="Export comparison"
-          data-slot="export-comparison"
-        >
-          <FileDown /> Export
-        </Button>
+        <DropdownMenu>
+          <Tip label="Export the comparison, to share">
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" aria-label="Export comparison" disabled={exporting}>
+                <FileDown /> Export
+              </Button>
+            </DropdownMenuTrigger>
+          </Tip>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => exportComparison('png')}>PNG image</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => exportComparison('pdf')}>PDF document</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Separator orientation="vertical" className="mx-1 h-5" />
         <Tip label="Back to the editor (Esc)">
           <Button size="sm" onClick={closeCompare}>

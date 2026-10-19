@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { type Page, expect, test } from '@playwright/test';
 import { addRoom, drag, newHouse, place, roomBox } from './helpers';
 
@@ -51,7 +52,7 @@ test('Comparison: the Existing Plan against a Scenario that demolishes a Shared 
   // The editor's chrome is gone; the Export spot is there, not yet wired.
   await expect(page.getByRole('button', { name: 'Undo' })).toHaveCount(0);
   await expect(tabs(page)).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Export comparison' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Export comparison' })).toBeEnabled();
 
   // Pick the sides: the Existing plan on the left, the Scenario on the right.
   await pick(page, 'Right side', 'Existing plan');
@@ -131,4 +132,28 @@ test('a compared Scenario with Conflicts shows them as a passive warning', async
     '1 conflict skipped'
   );
   await expect(page.getByRole('region', { name: 'Left side' }).getByRole('status')).toHaveCount(0);
+});
+
+test('a Comparison exports as PDF and PNG, named for both sides', async ({ page }) => {
+  await twoRooms(page);
+  await tabs(page).getByRole('button', { name: 'New scenario' }).click();
+  const living = await roomBox(page, 'Living');
+  await page.mouse.click(living.x + living.width + 2, living.y + living.height / 2);
+  await page.keyboard.press('Delete');
+  await tabs(page).getByRole('button', { name: 'Compare' }).click();
+  await expect(summary(page)).toBeVisible();
+
+  for (const [item, magic, ext] of [
+    ['PDF document', '%PDF', 'pdf'],
+    ['PNG image', '\x89PNG', 'png']
+  ] as const) {
+    await page.getByRole('button', { name: 'Export comparison' }).click();
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('menuitem', { name: item }).click()
+    ]);
+    expect(download.suggestedFilename()).toBe(`Untitled house - Existing plan vs Option A.${ext}`);
+    const bytes = await readFile((await download.path())!);
+    expect(bytes.subarray(0, 4).toString('latin1')).toBe(magic);
+  }
 });
