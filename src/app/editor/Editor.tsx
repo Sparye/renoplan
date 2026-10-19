@@ -1,18 +1,22 @@
 import { useEffect, useState } from 'react';
-import { deleteOpening, deleteRoom, mergeRooms } from '@/core';
+import { deleteRoom } from '@/core';
 import type { Project } from '@/persistence';
-import { projects } from '../projects';
+import { Comparison } from '../compare/Comparison';
+import { newId, projects } from '../projects';
+import { actions } from './actions';
 import { Canvas } from './Canvas';
 import { EditorContext } from './context';
 import { SidePanel } from './panel/SidePanel';
 import { StartOverlay } from './StartOverlay';
-import { createEditor } from './store';
+import { ScenarioTabs } from './ScenarioTabs';
+import { createEditor, currentPlan } from './store';
 import { Toolbar } from './Toolbar';
 
 export function Editor({ project }: { project: Project }) {
-  const [useEditor] = useState(() => createEditor(project, projects));
+  const [useEditor] = useState(() => createEditor(project, projects, newId));
   const empty = useEditor((s) => !Object.keys(s.history.present.walls).length && !s.history.past.length);
   const [started, setStarted] = useState(!empty);
+  const comparing = useEditor((s) => !!s.compare);
 
   useEffect(() => {
     requestAnimationFrame(() => useEditor.getState().fit());
@@ -23,6 +27,11 @@ export function Editor({ project }: { project: Project }) {
       const st = useEditor.getState();
       const field = (e.target as HTMLElement).closest('input, textarea, select, [role="combobox"]');
       if ((e.target as HTMLElement).closest('[role="dialog"], [role="listbox"]')) return;
+      // The Comparison is read-only: Escape leaves it, and nothing else edits.
+      if (st.compare) {
+        if (e.key === 'Escape') st.closeCompare();
+        return;
+      }
       if (field) {
         // Escape leaves a field (it has already reset itself) and clears the selection.
         if (e.key === 'Escape') {
@@ -40,17 +49,21 @@ export function Editor({ project }: { project: Project }) {
       } else if (mod && key === 'y') {
         e.preventDefault();
         st.redo();
-      } else if (e.key === 'Escape') st.select(null);
-      else if (e.key === 'Delete' || e.key === 'Backspace') {
+      } else if (e.key === 'Escape') {
+        if (st.tool !== 'select') st.setTool('select');
+        else st.select(null);
+      } else if (key === 'w' && !mod && st.mode.kind === 'scenario') {
+        st.setTool(st.tool === 'drawWall' ? 'select' : 'drawWall');
+      } else if (key === 'r' && !mod && st.mode.kind === 'scenario') {
+        st.setTool(st.tool === 'drawRoom' ? 'select' : 'drawRoom');
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
         const s = st.selection;
-        const plan = st.history.present;
-        if (s?.kind === 'room') st.commit(deleteRoom(plan, s.id), null);
-        else if (s?.kind === 'opening') st.commit(deleteOpening(plan, s.id), null);
-        else if (s?.kind === 'wall') {
-          // Deleting the Wall between two Rooms merges them.
-          const m = mergeRooms(plan, s.id);
-          if (m.id) st.commit(m.plan, { kind: 'room', id: m.id });
-        }
+        const act = actions(useEditor);
+        if (s?.kind === 'opening') act.removeOpening(s.id);
+        // Removing the Wall between two Rooms merges them; in a Scenario any Wall can be demolished.
+        else if (s?.kind === 'wall') act.removeWall(s.id);
+        else if (s?.kind === 'room' && st.mode.kind === 'existing')
+          st.commit(deleteRoom(currentPlan(st), s.id), null);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -61,9 +74,16 @@ export function Editor({ project }: { project: Project }) {
     <EditorContext.Provider value={useEditor}>
       <div className="flex h-full">
         <main className="relative min-w-0 flex-1 overflow-hidden">
-          <Canvas />
-          <Toolbar />
-          {!started && (
+          {comparing ? (
+            <Comparison />
+          ) : (
+            <>
+              <Canvas />
+              <Toolbar />
+              <ScenarioTabs />
+            </>
+          )}
+          {!started && !comparing && (
             <StartOverlay
               plan={useEditor.getState().history.present}
               onStart={(plan) => {

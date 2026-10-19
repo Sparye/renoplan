@@ -4,6 +4,7 @@ import {
   type Plan,
   type RoomId,
   type WallId,
+  along,
   claims,
   faceOf,
   faceOffsets,
@@ -44,14 +45,17 @@ export function detachFrom(p: Plan, room: RoomId, walls: readonly WallId[]): Map
       thickness: t,
       exterior: false,
       structural: false,
+      drawn: false,
       neg: side === 'neg' ? room : null,
       pos: side === 'pos' ? room : null
     };
     w[side] = null;
     copies.push({ orig: id, copy, moved: c !== l.c });
   }
-  // Two moved copies whose originals met at a corner meet where their new centrelines cross. Their end
-  // nodes are fresh, so moving them touches nothing else.
+  // Two moved copies whose originals met at a corner meet where their new centrelines cross: each copy's
+  // end at the corner moves there. A stub whose other end already lies there (left at an inside corner
+  // where a Room's Wall fused into a thicker one) stays as it is, or it would collapse. Their end nodes
+  // are fresh, so moving them touches nothing else.
   for (const k1 of copies)
     for (const k2 of copies) {
       if (!k1.moved || !k2.moved) continue;
@@ -60,9 +64,11 @@ export function detachFrom(p: Plan, room: RoomId, walls: readonly WallId[]): Map
       const l1 = wallLine(p, p.walls[k1.copy]!);
       const l2 = wallLine(p, p.walls[k2.copy]!);
       if (l1.axis === l2.axis) continue;
-      const end = o1.a === o2.a || o1.a === o2.b ? 'a' : o1.b === o2.a || o1.b === o2.b ? 'b' : null;
-      if (!end) continue;
-      const node = p.nodes[p.walls[k1.copy]![end]]!;
+      const corner = o1.a === o2.a || o1.a === o2.b ? 'a' : o1.b === o2.a || o1.b === o2.b ? 'b' : null;
+      if (!corner) continue;
+      const other = p.nodes[p.walls[k1.copy]![corner === 'a' ? 'b' : 'a']]!;
+      if (along(l1.axis, other) === l2.c) continue;
+      const node = p.nodes[p.walls[k1.copy]![corner]]!;
       if (l1.axis === 'h') node.x = l2.c;
       else node.y = l2.c;
     }
@@ -104,14 +110,20 @@ export function isolateNodes(p: Plan, room: RoomId) {
   }
 }
 
+/**
+ * Whether a Room shares a Wall it claims: with a Room on the other face, the Outline, or the user who drew
+ * it. A Room never owns such a Wall, so it detaches from it rather than moving or removing it.
+ */
+export function sharesWall(p: Plan, id: WallId, room: RoomId): boolean {
+  const w = p.walls[id]!;
+  const side = sideOf(w, room);
+  if (!side) return false;
+  return w.exterior || w.drawn || w[side === 'neg' ? 'pos' : 'neg'] !== null;
+}
+
 /** Detaches a Room from every Wall it shares, so it can move or resize without moving its neighbours. */
 export function detachRoom(p: Plan, room: RoomId) {
-  const shared = Object.keys(p.walls).filter((id) => {
-    const w = p.walls[id]!;
-    const side = sideOf(w, room);
-    if (!side) return false;
-    return w.exterior || w[side === 'neg' ? 'pos' : 'neg'] !== null;
-  });
+  const shared = Object.keys(p.walls).filter((id) => sharesWall(p, id, room));
   detachFrom(p, room, shared);
   mergeNodes(p);
   isolateNodes(p, room);

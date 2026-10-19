@@ -1,0 +1,228 @@
+{
+  "format": "renoplan",
+  "version": 1,
+  "project": {
+    "id": "v1-sample",
+    "name": "Sample house",
+    "createdAt": "2026-10-14T00:00:00.000Z",
+    "updatedAt": "2026-10-14T01:00:00.000Z",
+    "existingPlan": {
+      "nodes": {
+        "n1": {
+          "x": 100,
+          "y": 100
+        },
+        "n2": {
+          "x": 9900,
+          "y": 100
+        },
+        "n3": {
+          "x": 9900,
+          "y": 7900
+        },
+        "n4": {
+          "x": 100,
+          "y": 7900
+        },
+        "n12": {
+          "x": 4250,
+          "y": 4050
+        },
+        "n20": {
+          "x": 100,
+          "y": 4050
+        },
+        "n22": {
+          "x": 4250,
+          "y": 100
+        },
+        "n27": {
+          "x": 7350,
+          "y": 4050
+        },
+        "n34": {
+          "x": 7350,
+          "y": 100
+        },
+        "n38": {
+          "x": 3250,
+          "y": 4050
+        },
+        "n39": {
+          "x": 3250,
+          "y": 7150
+        },
+        "n47": {
+          "x": 100,
+          "y": 7150
+        }
+      },
+      "walls": {
+        "w5": {
+          "a": "n1",
+          "b": "n22",
+          "thickness": 200,
+          "exterior": true,
+          "structural": false,
+          "neg": null,
+          "pos": "r9"
+        },
+        "w6": {
+          "a": "n4",
+          "b": "n3",
+          "thickness": 200,
+          "exterior": true,
+          "structural": false,
+          "neg": null,
+          "pos": null
+        },
+        "w8": {
+          "a": "n2",
+          "b": "n3",
+          "thickness": 200,
+          "exterior": true,
+          "structural": false,
+          "neg": null,
+          "pos": null
+        },
+        "w19": {
+          "a": "n1",
+          "b": "n20",
+          "thickness": 200,
+          "exterior": true,
+          "structural": false,
+          "neg": null,
+          "pos": "r9"
+        },
+        "w21": {
+          "a": "n20",
+          "b": "n47",
+          "thickness": 200,
+          "exterior": true,
+          "structural": false,
+          "neg": null,
+          "pos": "r36"
+        },
+        "w23": {
+          "a": "n22",
+          "b": "n34",
+          "thickness": 200,
+          "exterior": true,
+          "structural": false,
+          "neg": null,
+          "pos": "r24"
+        },
+        "w30": {
+          "a": "n12",
+          "b": "n27",
+          "thickness": 100,
+          "exterior": false,
+          "structural": false,
+          "neg": "r24",
+          "pos": null
+        },
+        "w31": {
+          "a": "n22",
+          "b": "n12",
+          "thickness": 100,
+          "exterior": false,
+          "structural": false,
+          "neg": "r9",
+          "pos": "r24"
+        },
+        "w32": {
+          "a": "n34",
+          "b": "n27",
+          "thickness": 100,
+          "exterior": false,
+          "structural": false,
+          "neg": "r24",
+          "pos": null
+        },
+        "w35": {
+          "a": "n34",
+          "b": "n2",
+          "thickness": 200,
+          "exterior": true,
+          "structural": false,
+          "neg": null,
+          "pos": null
+        },
+        "w41": {
+          "a": "n20",
+          "b": "n38",
+          "thickness": 100,
+          "exterior": false,
+          "structural": false,
+          "neg": "r9",
+          "pos": "r36"
+        },
+        "w42": {
+          "a": "n47",
+          "b": "n39",
+          "thickness": 100,
+          "exterior": false,
+          "structural": false,
+          "neg": "r36",
+          "pos": null
+        },
+        "w44": {
+          "a": "n38",
+          "b": "n39",
+          "thickness": 100,
+          "exterior": false,
+          "structural": false,
+          "neg": "r36",
+          "pos": null
+        },
+        "w45": {
+          "a": "n38",
+          "b": "n12",
+          "thickness": 100,
+          "exterior": false,
+          "structural": false,
+          "neg": "r9",
+          "pos": null
+        },
+        "w48": {
+          "a": "n47",
+          "b": "n4",
+          "thickness": 200,
+          "exterior": true,
+          "structural": false,
+          "neg": null,
+          "pos": null
+        }
+      },
+      "rooms": {
+        "r9": {
+          "name": "Kitchen",
+          "type": "kitchen"
+        },
+        "r24": {
+          "name": "Dining",
+          "type": "living"
+        },
+        "r36": {
+          "name": "Bedroom",
+          "type": "bedroom"
+        }
+      },
+      "openings": {
+        "o49": {
+          "wall": "w42",
+          "kind": "door",
+          "at": 1095,
+          "width": 810,
+          "swing": "neg",
+          "hinge": "start"
+        }
+      },
+      "defaults": {
+        "interior": 100,
+        "exterior": 200
+      },
+      "nextId": 50
+    }
+  }
+}

@@ -6,19 +6,23 @@ import {
   deleteRoom,
   derive,
   formatArea,
-  renameRoom,
-  setRoomSize,
-  setRoomType
+  formatMetres,
+  setRoomSize
 } from '@/core';
 import { Button } from '@/app/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select';
-import { useEditorStore } from '../context';
+import { NEW_ROOM } from '../actions';
+import { useActions, useEditorStore } from '../context';
+import { activeApplied, currentPlan } from '../store';
 import { TINT } from '../drawing';
 import { Hint, LengthField, NameCombobox, Section } from './fields';
 
 export function RoomPanel({ id }: { id: RoomId }) {
   const useEditor = useEditorStore();
-  const plan = useEditor((s) => s.history.present);
+  const act = useActions();
+  const plan = useEditor(currentPlan);
+  const scenario = useEditor((s) => s.mode.kind === 'scenario');
+  const isNew = useEditor((s) => activeApplied(s)?.statuses.rooms[id] === 'new');
   const commit = useEditor((s) => s.commit);
   const room = plan.rooms[id]!;
   const D = derive(plan);
@@ -38,18 +42,20 @@ export function RoomPanel({ id }: { id: RoomId }) {
     <Section title="Room" hint={`${formatArea(g.area)} m²`}>
       <NameCombobox
         aria-label="Name"
+        // A Room just drawn opens with its name ready to type over.
+        autoFocus={isNew && room.name === NEW_ROOM}
         value={draft ?? room.name}
         onChange={setDraft}
         onBlur={() => {
-          if (draft !== null) commit(renameRoom(plan, id, draft));
+          if (draft !== null) act.renameRoom(id, draft);
           setDraft(null);
         }}
         onEnter={() => {
-          if (draft !== null) commit(renameRoom(plan, id, draft));
+          if (draft !== null) act.renameRoom(id, draft);
           setDraft(null);
         }}
       />
-      <Select value={room.type} onValueChange={(t) => commit(setRoomType(plan, id, t as RoomType))}>
+      <Select value={room.type} onValueChange={(t) => act.setRoomType(id, t as RoomType)}>
         <SelectTrigger size="sm" className="w-full" aria-label="Room type">
           <SelectValue />
         </SelectTrigger>
@@ -62,7 +68,19 @@ export function RoomPanel({ id }: { id: RoomId }) {
           ))}
         </SelectContent>
       </Select>
-      {g.rectangular ? (
+      {scenario ? (
+        <>
+          {g.rectangular && b && (
+            <p className="text-sm tabular-nums">
+              {formatMetres(W)} × {formatMetres(L)} m
+            </p>
+          )}
+          <Hint>
+            {isNew ? 'New in this scenario. ' : ''}In a scenario, rooms change by pushing, demolishing and
+            drawing walls.
+          </Hint>
+        </>
+      ) : g.rectangular ? (
         <>
           <div className="flex items-center gap-2">
             <LengthField label="W" value={W} onCommit={(v) => commit(setRoomSize(plan, id, v, L))} />
@@ -79,14 +97,16 @@ export function RoomPanel({ id }: { id: RoomId }) {
       )}
       {D.crossing.includes(id) && <p className="text-destructive text-xs">Crosses the outline.</p>}
       {overlapping && <p className="text-destructive text-xs">Overlaps another room.</p>}
-      <Button
-        variant="outline"
-        size="sm"
-        className="text-destructive"
-        onClick={() => commit(deleteRoom(plan, id), null)}
-      >
-        Delete room
-      </Button>
+      {!scenario && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-destructive"
+          onClick={() => commit(deleteRoom(plan, id), null)}
+        >
+          Delete room
+        </Button>
+      )}
     </Section>
   );
 }

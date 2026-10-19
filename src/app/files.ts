@@ -1,6 +1,6 @@
-/** Offers text as a file to save. */
-export function download(filename: string, text: string, type = 'application/json') {
-  const url = URL.createObjectURL(new Blob([text], { type }));
+/** Offers text, or a Blob (an Export), as a file to save. */
+export function download(filename: string, data: string | Blob, type = 'application/json') {
+  const url = URL.createObjectURL(typeof data === 'string' ? new Blob([data], { type }) : data);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
@@ -24,4 +24,10 @@ export function pickFile(accept = '.json,application/json'): Promise<string | nu
   });
 }
 
-export const fileName = (name: string) => `${name.replace(/[^\w\- ]+/g, '').trim() || 'house'}.renoplan.json`;
+const clean = (name: string) => name.replace(/[^\w\- ]+/g, '').trim();
+
+export const fileName = (name: string) => `${clean(name) || 'house'}.renoplan.json`;
+
+/** An Export's file name: "Home - Option A.pdf". */
+export const exportName = (project: string, view: string, ext: string) =>
+  `${[clean(project) || 'house', clean(view)].filter(Boolean).join(' - ')}.${ext}`;

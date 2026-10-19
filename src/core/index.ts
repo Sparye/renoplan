@@ -11,3 +11,4 @@ export { ROOM_TYPES, guessRoomType } from './roomType';
 export * from './snap';
 export * from './units';
 export * from './queries';
+export * from './scenario';

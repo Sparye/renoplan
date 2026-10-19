@@ -157,18 +157,28 @@ export function applyFusion(p: Plan, fu: Fusion) {
   const own = isolate(p, fu.own, fu.s0, fu.s1);
   const host = isolate(p, fu.host, fu.s0, fu.s1);
   p.walls[host]![fu.side] = room;
+  // A drawn Wall stays drawn: the host now stands where the user drew it.
+  p.walls[host]!.drawn ||= p.walls[own]!.drawn;
   moveOpenings(p, own, host);
   const axis = wallLine(p, p.walls[own]!).axis;
-  // The Room's side Walls re-end on the host's centreline.
+  // The Room's side Walls re-end on the host's centreline. A stub of the Room's already reaching the
+  // host's end (left between the two centrelines by an earlier fusion at the same corner) would collapse.
+  // Unless a Wall in line with it, re-ended from the other side or already going on from the host's end,
+  // takes over its stretch with the same claims, it stays as it is, so the Room keeps its corner closed.
   for (const [n, m] of [
     [endNode(p, own, 0), endNode(p, host, 0)],
     [endNode(p, own, 1), endNode(p, host, 1)]
   ] as const) {
     if (n === m) continue;
-    for (const id of wallsAt(p, n)) {
-      if (id === own) continue;
+    const across = (id: WallId) => wallLine(p, p.walls[id]!).axis !== axis;
+    const sides = wallsAt(p, n).filter((id) => id !== own && across(id));
+    for (const id of sides) {
       const w = p.walls[id]!;
-      if (wallLine(p, w).axis === axis) continue;
+      const takenOver = [...sides, ...wallsAt(p, m).filter(across)].some((o) => {
+        const x = p.walls[o]!;
+        return o !== id && x.neg === w.neg && x.pos === w.pos && x.thickness >= w.thickness;
+      });
+      if ((w.a === m || w.b === m) && claims(w, room!) && !takenOver) continue;
       if (w.a === n) w.a = m;
       if (w.b === n) w.b = m;
     }
@@ -195,6 +205,7 @@ function dedupe(p: Plan): boolean {
     k.pos ??= w.pos;
     k.exterior ||= w.exterior;
     k.structural ||= w.structural;
+    k.drawn ||= w.drawn;
     moveOpenings(p, id, keep);
     delete p.walls[id];
     changed = true;
@@ -229,54 +240,71 @@ function covers(r: Rect, others: readonly Rect[]): boolean {
   return all;
 }
 
+type Merge = { lo: WallId; hi: WallId; neg: string | null; pos: string | null };
+
+/** How two collinear Walls meeting end to end at node n would merge, or null if they can't. */
+function mergeable(p: Plan, n: NodeId, i: WallId, j: WallId, rects: () => Map<WallId, Rect>): Merge | null {
+  const x = p.walls[i]!;
+  const y = p.walls[j]!;
+  if (wallLine(p, x).axis !== wallLine(p, y).axis) return null;
+  const [lo, hi] = x.b === n && y.a === n ? [i, j] : y.b === n && x.a === n ? [j, i] : [null, null];
+  if (!lo || !hi) return null;
+  if (
+    x.thickness !== y.thickness ||
+    x.exterior !== y.exterior ||
+    x.structural !== y.structural ||
+    x.drawn !== y.drawn
+  )
+    return null;
+  const merged: Record<Side, string | null> = { neg: null, pos: null };
+  for (const side of ['neg', 'pos'] as const) {
+    if (x[side] === y[side]) {
+      merged[side] = x[side];
+      continue;
+    }
+    const bare = x[side] === null ? i : y[side] === null ? j : null;
+    if (!bare || !faceCovered(p, bare, side, rects())) return null;
+    merged[side] = x[side] ?? y[side];
+  }
+  // One Room on both faces of a Wall is never right, even where each piece had it on one face only.
+  if (merged.neg && merged.neg === merged.pos) return null;
+  return { lo, hi, ...merged };
+}
+
+function merge(p: Plan, m: Merge, onMerge?: (drop: WallId, keep: WallId) => void) {
+  const l0 = wallLine(p, p.walls[m.lo]!);
+  const l1 = wallLine(p, p.walls[m.hi]!);
+  const keep = l0.t1 - l0.t0 >= l1.t1 - l1.t0 ? m.lo : m.hi;
+  const drop = keep === m.lo ? m.hi : m.lo;
+  p.walls[keep] = { ...p.walls[keep]!, a: p.walls[m.lo]!.a, b: p.walls[m.hi]!.b, neg: m.neg, pos: m.pos };
+  moveOpenings(p, drop, keep);
+  delete p.walls[drop];
+  onMerge?.(drop, keep);
+}
+
 /**
  * Collinear Walls through a node joining only them merge when all their attributes match. A claim also
  * extends across a piece whose face on that side touches no floor (a corner stub), so the normal form
- * doesn't depend on the order things were fused in.
+ * doesn't depend on the order things were fused in. A node where two such pairs merely cross is undone
+ * too: Walls crossing mid-span are an Overlap, not a junction, and splitting them would cut an Opening.
  */
 export function mergeCollinear(p: Plan, onMerge?: (drop: WallId, keep: WallId) => void): boolean {
   const inc = incidence(p);
-  let rects: Map<WallId, Rect> | null = null;
+  let cache: Map<WallId, Rect> | null = null;
+  const rects = () => (cache ??= new Map(Object.keys(p.walls).map((id) => [id, materialRect(p, id, inc)])));
   for (const [n, ws] of inc) {
-    if (ws.length !== 2) continue;
-    const [i, j] = ws as [WallId, WallId];
-    const x = p.walls[i]!;
-    const y = p.walls[j]!;
-    const lx = wallLine(p, x);
-    const ly = wallLine(p, y);
-    if (lx.axis !== ly.axis) continue;
-    const [lo, hi] = x.b === n && y.a === n ? [i, j] : y.b === n && x.a === n ? [j, i] : [null, null];
-    if (!lo || !hi) continue;
-    if (x.thickness !== y.thickness || x.exterior !== y.exterior || x.structural !== y.structural) continue;
-    const merged: Partial<Record<Side, string | null>> = {};
-    let ok = true;
-    for (const side of ['neg', 'pos'] as const) {
-      if (x[side] === y[side]) {
-        merged[side] = x[side];
-        continue;
-      }
-      const bare = x[side] === null ? i : y[side] === null ? j : null;
-      rects ??= new Map(Object.keys(p.walls).map((id) => [id, materialRect(p, id, inc)]));
-      if (!bare || !faceCovered(p, bare, side, rects)) {
-        ok = false;
-        break;
-      }
-      merged[side] = x[side] ?? y[side];
-    }
-    if (!ok) continue;
-    const keep = lx.t1 - lx.t0 >= ly.t1 - ly.t0 ? i : j;
-    const drop = keep === i ? j : i;
-    p.walls[keep] = {
-      ...p.walls[keep]!,
-      a: p.walls[lo]!.a,
-      b: p.walls[hi]!.b,
-      neg: merged.neg!,
-      pos: merged.pos!
-    };
-    moveOpenings(p, drop, keep);
-    delete p.walls[drop];
+    let pairs: [WallId, WallId][];
+    if (ws.length === 2) pairs = [ws as [WallId, WallId]];
+    else if (ws.length === 4) {
+      const h = ws.filter((id) => wallLine(p, p.walls[id]!).axis === 'h');
+      const v = ws.filter((id) => wallLine(p, p.walls[id]!).axis === 'v');
+      if (h.length !== 2 || v.length !== 2) continue;
+      pairs = [h as [WallId, WallId], v as [WallId, WallId]];
+    } else continue;
+    const merges = pairs.map(([i, j]) => mergeable(p, n, i, j, rects));
+    if (merges.some((m) => !m)) continue;
+    for (const m of merges) merge(p, m!, onMerge);
     delete p.nodes[n];
-    onMerge?.(drop, keep);
     return true;
   }
   return false;
@@ -305,14 +333,14 @@ function fitOpenings(p: Plan) {
 }
 
 /**
- * During capture an interior Wall that bounds no Room is an artefact (a detached copy whose claim was
- * trimmed away): no Room or Outline uses it, so it goes. Revisit when Scenario Mode gets Draw Wall.
+ * An interior Wall that bounds no Room is an artefact (a detached copy whose claim was trimmed away): no
+ * Room or Outline uses it, so it goes — unless the user drew it on its own (ADR 0010).
  */
 function dropBare(p: Plan): boolean {
   let changed = false;
   for (const id of Object.keys(p.walls)) {
     const w = p.walls[id]!;
-    if (w.exterior || w.neg || w.pos) continue;
+    if (w.exterior || w.drawn || w.neg || w.pos) continue;
     deleteWall(p, id);
     changed = true;
   }

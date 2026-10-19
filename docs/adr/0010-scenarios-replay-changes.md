@@ -1,0 +1,52 @@
+# Scenarios replay their Changes over the Existing Plan
+
+Status: accepted (2026-10-15)
+
+ADR 0001 makes a Scenario a set of Changes to the Existing Plan. ADR 0005 keeps the Existing Plan editable and turns Changes that no longer apply into Conflicts. Both assumed elements have stable identities. Walls don't: ADR 0009's normal form renumbers them by design. Pushing a Shared Wall replaces it with a de-duplicated copy, resizing a Room rebuilds its own Walls, and splits, merges and detach/re-fuse retire ids. Even moving a Room by nothing can renumber Walls. A Change that stored a Wall id would turn into a Conflict after harmless corrections.
+
+## Decision
+
+- **A Scenario is an ordered list of Changes, one per Scenario Mode gesture.** Its plan is never stored. Each time it is read, the Changes are replayed over the current Existing Plan, in order, through the same core commands the Existing Plan uses (`pushWall`, `mergeRooms`, `addOpening`, `nameSpace`…). `applyScenario(existing, scenario)` returns `{ plan, statuses, conflicts }`. It is pure, never throws, and is memoised per (Existing Plan, Scenario) pair.
+- **Changes**: demolish, draw, push or re-thicken a Wall; add, remove or modify an Opening; name a space; draw a Room; rename or retype a Room. Each maps to one of CONTEXT's three kinds (`changeKind`: Demolished, New, Modified). Demolishing a Wall between two Rooms merges them. Demolishing anything else removes that stretch of Wall, and the soundness check refuses it if a Room or the Outline would be left open. The Structural Mark is a belief about the house today, so it is not a Change; it is edited in the Existing Plan.
+- **Recording**: `recordChange(existing, scenario, gesture)` takes the UI's ids in the Scenario's current plan, turns them into stored targets, and appends the Change only if it does something the user can see: Wall material, a Room's region, name or type, or an Opening. Normal form renumbering or re-fusing Walls doesn't count. So a Change is never born a Conflict. Replay uses the same test. A push that its range clamps to nothing counts as doing nothing, even if detaching and fusing back leave the plan looking slightly different. Change ids come from a counter in the Scenario.
+- **Walls are targeted by geometry, not id.** A `WallRef` stores the centreline stretch (axis, centreline, span) and the Rooms on its two faces when the Change was recorded. A Wall is first what it bounds, then where it is. Resolving it tries, in order:
+  1. Walls on that centreline over that stretch that bound those Rooms on those faces, however they were split, merged or renumbered.
+  2. Otherwise the Wall moved. It is **followed** to the one parallel centreline whose Walls bound those Rooms on those faces over that stretch, and a push stays relative. This also covers a Room whose boundary moved off a measured Outline Wall that stayed put.
+  3. Otherwise whatever Walls lie on that centreline, for the command to judge.
+  4. Otherwise it has vanished, or is ambiguous if more than one centreline could be it.
+
+  Following a move is a deliberate reading of ADR 0005: most moves are measurement corrections, which must flow into Scenarios. "Moved" means moved beyond recognition. When several Walls share the stretch, the one bounding the recorded Rooms goes first, then the one covering most of it.
+- **Rooms and Openings are targeted by id**, because Existing Plan ids for them never change: commands keep them, and a merge keeps one of the two. A Room or Opening that the Scenario itself created has an id minted during replay from the Existing Plan's counter. That id changes whenever the Existing Plan gains anything, and it could even collide with a later Existing Plan id. So a target is either an Existing Plan id or `{ created: <Change id> }`, meaning "what that Change created". Replay keeps the map from one to the other. A Room on a `WallRef`'s face is stored the same way.
+- **Merges keep the Room they kept when recorded.** `mergeRooms` keeps the larger Room. Once a resize flips which Room is larger, a merged Room's id would change and later Changes on it would vanish. So a demolition stores the Room that survived, and replay passes it to `mergeRooms` as `prefer`. If that Room is gone, the larger Room survives as before, and later Changes on the missing Room vanish. Nothing is silently retargeted.
+- **Conflicts** have three reasons. *Vanished*: the target is gone, or the Wall moved with nothing to recognise it by. *Ambiguous*: the Wall moved and more than one centreline fits. *Rejected*: the target is there, but the command now throws, would break the plan, or no longer makes, demolishes or moves anything. A Change that sets a value (rename, retype, thickness, an Opening's size or place) that the Existing Plan has since been given is satisfied, not a Conflict: there is nothing to resolve. A Conflict is skipped. Later Changes still apply, unless they depended on it, in which case they become Conflicts too.
+- **Change Status is a geometric diff of what is built**, independent of the Change list. Wall material is compared as stretches per (axis, centreline, thickness). Each Wall of the Scenario's plan is split into Retained and New stretches, and Existing Plan Walls get the stretches that are Demolished. A Modified (pushed) Wall therefore shows as Demolished where it was and New where it went, as CONTEXT says. A Wall that Existing Plan edits merely renumbered stays Retained. Rooms are Retained or New by id. An Opening is Retained only if it is the same Opening in the same place.
+- **Drawn Walls survive normal form.** A Wall gains `drawn: boolean`: drawn on its own with Draw Wall (`drawWall`). A drawn Wall may cross other Walls or meet them in a T, but Draw Wall only adds Wall where there is none: stretches that would lie along a parallel Wall's material are left out. Coincident Walls of different thickness have no sensible normal form, and a small correction that extends an Existing Plan Wall into a drawn one then just shortens the drawn one. Normal form still drops interior Walls that bound no Room (capture's detach artefacts), but never a drawn one. `drawn` is an attribute like the Structural Mark. Split pieces keep it, Walls with different `drawn` never merge, and fusion or de-duplication keep it. A Room never owns a drawn Wall: it detaches from it like from a Shared Wall, and deleting the Room leaves it standing. Capture never draws, so capture behaves exactly as before.
+- **A drawn Wall that divides a Room splits it.** The Room keeps its largest part; the rest becomes Unlabelled Space for the user to name, which makes the drawn Wall a Shared Wall. A Wall the Room lets go of this way still stands in the house, so it is kept like a drawn Wall rather than dropped, and Change Status shows nothing Demolished.
+- **Draw Room** makes a Room of part of a space: a rectangle of Wall centrelines, with drawn Walls along its sides wherever there is none yet, and the floor they close off named. Drawn inside a Room it carves the new Room out, and that Room keeps the rest, even when the rest is smaller. Naming the Room the last Change just made (by Draw Room or naming a space) changes that Change instead of adding a rename, so drawing a Room and typing its name is one Change and one undo step.
+- **Document format v2** (ADR 0006): a Project gains `scenarios`, each stored as its Changes. The v1→v2 migration adds `scenarios: []` and `drawn: false` on every Wall.
+
+## Considered Options
+
+- Wall ids as targets — every harmless correction would conflict.
+- Ids plus lineage, propagating "this Wall descends from that one" through every split, merge, detach and rebuild. It touches every command, and a rebuilt Room still loses its Walls' lineage.
+- Geometric targets for Rooms and Openings too (a point, a position on a Wall). This isn't needed, since their Existing Plan ids are stable, and a point drifts as Rooms resize.
+- Treating a moved Wall as a Conflict (the literal reading of ADR 0005). Rejected: capture would no longer be imperfect without penalty.
+- Storing each Change as the resulting state of its element, rather than the gesture. That duplicates what the commands compute and can't follow a corrected Existing Plan.
+- Change Status read from the Change list. That makes renumbered Walls look Demolished and New, and has to special-case every command.
+- Keeping bare Walls only in a Scenario's normal form. A Scenario's pushes and moves would then leave behind the detach artefacts that capture drops.
+- Stable ids for Scenario-created elements by giving replay its own id range. That needs a second counter and prefix in every plan check, for what `{ created }` gives directly.
+
+## Consequences
+
+- Existing Plan corrections flow into every Scenario: renumbering, splitting, merging, small moves, thickness changes, and new Rooms or Openings. Property tests cover this.
+- Replaying costs one command per Change on every Existing Plan or Scenario edit. That is cheap at house scale, and the result is memoised per object pair.
+- The UI must not keep ids of Scenario-created elements across Existing Plan edits. It re-selects by what it sees, just as it already does after capture commands.
+- Comparison's counts (Walls demolished, Structural Marks touched, Extension area) come from the Change Status diff.
+
+Deferred:
+
+- A drawn Wall's ends are where they were drawn. It doesn't follow a correction to the Wall it was drawn to, so a corrected Existing Plan can leave it short of that Wall or poking past it.
+- Demolishing an exterior Wall (for an Extension), or a Room's Wall onto Unlabelled Space, is refused by the soundness check. Revisit with Extensions.
+- The Show Changes toggle is UI state and is not stored.
+- Coalescing consecutive Changes to the same element (e.g. dragging an Opening twice), and the Conflict-resolution UI.
+- Pre-existing capture bugs found by the property tests, being fixed on the parent branch. Moving a Room against an L-shaped Outline by nothing, or with snapping, can change its area by 0.005–0.01 m². One case is pinned in `rooms.test.ts` as a test marked failing until fixed: after a top wing and a push of the Outline, snapping a named space 1 mm changes its area by 100 mm². Also seen: `pushWall` throwing "wall is not orthogonal" after two right wings.

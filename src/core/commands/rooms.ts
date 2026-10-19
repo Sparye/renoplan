@@ -1,5 +1,5 @@
 import { derive } from '../derive';
-import { claimGrid, claimSpans, faceSpans } from '../claims';
+import { claimGrid, claimSpans, faceSpans, without } from '../claims';
 import { type Rect, intersects } from '../grid';
 import { addNode, deleteWall, moveNodes } from '../graph';
 import {
@@ -20,7 +20,7 @@ import { guessRoomType } from '../roomType';
 import type { Mm } from '../units';
 import { detachRoom } from './detach';
 import { create, edit, finish } from './edit';
-import { MIN_ROOM } from './walls';
+import { MIN_ROOM, drawWall } from './walls';
 
 /** Rooms are parked in rows this far to the right of the Outline, this far apart. */
 const PARK_OFFSET: Mm = 2000;
@@ -53,36 +53,43 @@ export function addRoom(p: Plan, r: NewRoom): { plan: Plan; id: RoomId | null } 
   });
 }
 
+/** A thickness for each side of a rectangle of Walls. */
+export type SideThickness = { top: Mm; bottom: Mm; left: Mm; right: Mm };
+
 /**
- * Four Walls of thickness t around a rectangle. With a room, the rectangle is its inside and each Wall
- * claims it; without, the rectangle is the outside of the Walls (an Outline).
+ * Four Walls of thickness t (one for all sides, or one per side) around a rectangle. With a room, the
+ * rectangle is its inside and each Wall claims it; without, the rectangle is the outside of the Walls
+ * (an Outline).
  */
-export function rectWalls(p: Plan, r: Rect, t: Mm, room: RoomId | null, exterior: boolean) {
-  const [fl, ce] = faceOffsets(t);
+export function rectWalls(p: Plan, r: Rect, t: Mm | SideThickness, room: RoomId | null, exterior: boolean) {
+  const ts = typeof t === 'number' ? { top: t, bottom: t, left: t, right: t } : t;
   // Room: faces on the rectangle from outside. Outline: faces on the rectangle from inside.
-  const x0 = room ? r.x0 - ce : r.x0 + fl;
-  const x1 = room ? r.x1 + fl : r.x1 - ce;
-  const y0 = room ? r.y0 - ce : r.y0 + fl;
-  const y1 = room ? r.y1 + fl : r.y1 - ce;
+  const lo = (v: Mm, th: Mm) => (room ? v - faceOffsets(th)[1] : v + faceOffsets(th)[0]);
+  const hi = (v: Mm, th: Mm) => (room ? v + faceOffsets(th)[0] : v - faceOffsets(th)[1]);
+  const x0 = lo(r.x0, ts.left);
+  const x1 = hi(r.x1, ts.right);
+  const y0 = lo(r.y0, ts.top);
+  const y1 = hi(r.y1, ts.bottom);
   const tl = addNode(p, x0, y0);
   const tr = addNode(p, x1, y0);
   const br = addNode(p, x1, y1);
   const bl = addNode(p, x0, y1);
-  const wall = (a: string, b: string, side: Side | null) => {
+  const wall = (a: string, b: string, thickness: Mm, side: Side | null) => {
     p.walls[mintId(p, 'w')] = {
       a,
       b,
-      thickness: t,
+      thickness,
       exterior,
       structural: false,
+      drawn: false,
       neg: side === 'neg' ? room : null,
       pos: side === 'pos' ? room : null
     };
   };
-  wall(tl, tr, room ? 'pos' : null);
-  wall(bl, br, room ? 'neg' : null);
-  wall(tl, bl, room ? 'pos' : null);
-  wall(tr, br, room ? 'neg' : null);
+  wall(tl, tr, ts.top, room ? 'pos' : null);
+  wall(bl, br, ts.bottom, room ? 'neg' : null);
+  wall(tl, bl, ts.left, room ? 'pos' : null);
+  wall(tr, br, ts.right, room ? 'neg' : null);
 }
 
 /** The next free spot in rows to the right of the Outline (or of everything, without one). */
@@ -195,7 +202,7 @@ export function setRoomType(p: Plan, room: RoomId, type: RoomType): Plan {
   });
 }
 
-/** Removes a Room. Its own Walls go; Walls it shares stay with the neighbour. */
+/** Removes a Room. Its own Walls go; Walls it shares stay with the neighbour, the Outline, or as drawn. */
 export function deleteRoom(p: Plan, room: RoomId): Plan {
   if (!p.rooms[room]) return p;
   return edit(p, (d) => {
@@ -204,7 +211,7 @@ export function deleteRoom(p: Plan, room: RoomId): Plan {
       const side = sideOf(w, room);
       if (!side) continue;
       const other = side === 'neg' ? w.pos : w.neg;
-      if (!other && !w.exterior) deleteWall(d, id);
+      if (!other && !w.exterior && !w.drawn) deleteWall(d, id);
       else w[side] = null;
     }
     delete d.rooms[room];
@@ -212,10 +219,11 @@ export function deleteRoom(p: Plan, room: RoomId): Plan {
 }
 
 /**
- * Removes the Shared Wall between two Rooms, merging them. The larger Room keeps its name. Rooms on two
+ * Removes the Shared Wall between two Rooms, merging them. The larger Room keeps its name, unless `prefer`
+ * names one of the two (a Scenario replaying a merge keeps the Room it kept when recorded). Rooms on two
  * sides of the Outline never merge.
  */
-export function mergeRooms(p: Plan, wallId: WallId): { plan: Plan; id: RoomId | null } {
+export function mergeRooms(p: Plan, wallId: WallId, prefer?: RoomId): { plan: Plan; id: RoomId | null } {
   const w = p.walls[wallId];
   if (!w?.neg || !w.pos || w.neg === w.pos) return { plan: p, id: null };
   const pair = new Set([w.neg, w.pos]);
@@ -223,7 +231,11 @@ export function mergeRooms(p: Plan, wallId: WallId): { plan: Plan; id: RoomId | 
   if (between.some((x) => x.exterior)) return { plan: p, id: null };
   const rooms = derive(p).rooms;
   const [keep, drop] =
-    (rooms[w.neg]?.area ?? 0) >= (rooms[w.pos]?.area ?? 0) ? [w.neg, w.pos] : [w.pos, w.neg];
+    prefer === w.pos
+      ? [w.pos, w.neg]
+      : prefer === w.neg || (rooms[w.neg]?.area ?? 0) >= (rooms[w.pos]?.area ?? 0)
+        ? [w.neg, w.pos]
+        : [w.pos, w.neg];
   return create(p, (d) => {
     for (const id of Object.keys(d.walls)) {
       const x = d.walls[id]!;
@@ -249,21 +261,88 @@ export function nameSpace(p: Plan, x: number, y: number, name: string): { plan: 
   const outside = g.flood(g.border(), (c) => !solid[c]);
   const region = g.flood([g.cellAt(x, y)], (c) => !solid[c] && !outside[c] && !taken[c]);
 
+  // Where a parallel Wall's material covers a Wall right across (a Room's own Wall pushed into the Outline
+  // from outside), its face is no boundary anyone sees: the space is bounded by the Wall around it, and
+  // sharing the buried one would join two Rooms through it.
+  const buried = (wid: string): [number, number][] => {
+    const { line } = D.walls[wid]!;
+    const out: [number, number][] = [];
+    for (const o in D.walls) {
+      const q = D.walls[o]!;
+      // In-line pieces of the same Wall overlap only by their end caps; they don't bury each other.
+      if (o === wid || q.line.axis !== line.axis) continue;
+      if (q.line.c === line.c && p.walls[o]!.thickness === p.walls[wid]!.thickness) continue;
+      const [lo, hi, s, e] =
+        line.axis === 'v'
+          ? [q.rect.x0, q.rect.x1, q.rect.y0, q.rect.y1]
+          : [q.rect.y0, q.rect.y1, q.rect.x0, q.rect.x1];
+      if (lo <= line.lo && hi >= line.hi) out.push([s, e]);
+    }
+    return out;
+  };
+
   const result = create(p, (d) => {
     const id = mintId(d, 'r');
     const n = name.trim() || 'Hallway';
     d.rooms[id] = { name: n, type: guessRoomType(n) };
     for (const wid of Object.keys(d.walls)) {
       const { line, rect } = D.walls[wid]!;
-      for (const side of ['neg', 'pos'] as const) {
-        if (d.walls[wid]![side] !== null) continue;
-        const spans = faceSpans(g, region, junction[line.axis], line.axis, faceOf(line, side), side, rect);
+      const hidden = buried(wid);
+      const spans = (side: Side) =>
         // Claims only ever extend over the free face, never over another Room's claim.
-        if (spans.length) claimSpans(d, wid, side, spans, id, null);
-      }
+        d.walls[wid]![side] !== null
+          ? []
+          : without(
+              faceSpans(g, region, junction[line.axis], line.axis, faceOf(line, side), side, rect),
+              hidden
+            );
+      const neg = spans('neg');
+      const pos = spans('pos');
+      // Where the space lies on both faces, the Wall stands inside it (a drawn stub): neither face bounds it.
+      if (neg.length) claimSpans(d, wid, 'neg', without(neg, pos), id, null);
+      if (pos.length) claimSpans(d, wid, 'pos', without(pos, neg), id, null);
     }
     return id;
   });
   if (!result.id || !(derive(result.plan).rooms[result.id]?.area ?? 0)) return { plan: p, id: null };
   return result;
+}
+
+/**
+ * Draw Room: a Room on a rectangle of Wall centrelines. New drawn Walls go along its sides wherever there
+ * is no Wall yet, and the floor they close off becomes the Room. Drawn inside a Room, it carves the new
+ * Room out of it, and that Room keeps the rest. A no-op unless the rectangle closes off a space.
+ */
+export function drawRoom(
+  p: Plan,
+  r: Rect,
+  name: string,
+  thickness: Mm = p.defaults.interior
+): { plan: Plan; id: RoomId | null } {
+  const [x0, x1] = [Math.round(Math.min(r.x0, r.x1)), Math.round(Math.max(r.x0, r.x1))];
+  const [y0, y1] = [Math.round(Math.min(r.y0, r.y1)), Math.round(Math.max(r.y0, r.y1))];
+  if (x1 - x0 < MIN_ROOM || y1 - y0 < MIN_ROOM) return { plan: p, id: null };
+  const mid = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+  let q = p;
+  for (const [a, b] of [
+    [
+      { x: x0, y: y0 },
+      { x: x1, y: y0 }
+    ],
+    [
+      { x: x1, y: y0 },
+      { x: x1, y: y1 }
+    ],
+    [
+      { x: x0, y: y1 },
+      { x: x1, y: y1 }
+    ],
+    [
+      { x: x0, y: y0 },
+      { x: x0, y: y1 }
+    ]
+  ] as const)
+    q = drawWall(q, a, b, thickness, mid).plan;
+  const n = nameSpace(q, mid.x, mid.y, name);
+  return n.id ? n : { plan: p, id: null };
 }

@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'vitest';
 import { derive } from '../derive';
-import { emptyPlan } from '../plan';
+import { emptyPlan, wallLine } from '../plan';
 import { sharedWalls, size, valid, wallAt } from '../test/helpers';
-import { addOutline } from './outline';
+import { addOpening } from './openings';
+import { addOutline, addWing } from './outline';
 import { addRoom, deleteRoom, mergeRooms, moveRoom, nameSpace, renameRoom, setRoomSize } from './rooms';
+import { pushWall, setWallThickness } from './walls';
 
 const base = () => valid(addOutline(emptyPlan(), 10000, 8000, { x: 0, y: 0 }));
 
@@ -71,6 +73,22 @@ describe('snapping two rooms one interior wall apart', () => {
 });
 
 describe('moveRoom', () => {
+  // Known bug, found by the Scenario property tests (ADR 0010, deferred): after a top wing and a push of
+  // the Outline, snapping the named space 1 mm changes its area by 100 mm². Marked as failing until fixed.
+  test.fails('moving a Room keeps its area after a wing and an Outline push (area drifts on snap)', () => {
+    let p = addWing(addOutline(emptyPlan(), 6000, 5000), 'top', 1500, 1500);
+    const walls = Object.keys(p.walls);
+    p = pushWall(p, walls[1463753573 % walls.length]!, -1500);
+    const s = derive(p).unlabelled[0]!;
+    const r = s.rects.reduce((a, b) =>
+      Math.min(b.x1 - b.x0, b.y1 - b.y0) > Math.min(a.x1 - a.x0, a.y1 - a.y0) ? b : a
+    );
+    const n = nameSpace(p, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, 'Hallway');
+    p = valid(n.plan);
+    const q = valid(moveRoom(p, n.id!, 0, -1));
+    expect(derive(q).rooms[n.id!]!.area).toBe(derive(p).rooms[n.id!]!.area);
+  });
+
   test('detaches from neighbours, who keep the Shared Wall', () => {
     const a = addRoom(emptyPlan(), { name: 'A', w: 3000, l: 4000, x: 0, y: 0 });
     const b = addRoom(a.plan, { name: 'B', w: 2000, l: 4000, x: 3100, y: 0 });
@@ -99,6 +117,81 @@ describe('moveRoom', () => {
     expect(D.rooms[a.id!]!.area).toBe(9_000_000);
     expect(D.rooms[b.id!]!.area).toBe(9_000_000);
     expect(D.overlaps.reduce((s, r) => s + (r.x1 - r.x0) * (r.y1 - r.y0), 0)).toBe(2000 * 2500);
+  });
+
+  test('moving by zero next to a room crossing the Outline keeps its door whole', () => {
+    // The hall fills the Outline; R straddles the right exterior Wall, its bottom inside face level
+    // with the hall's, so R's bottom Wall crosses that exterior Wall mid-span.
+    const p0 = base();
+    const hall = nameSpace(p0, 5000, 4000, 'Hallway');
+    const r = addRoom(hall.plan, { name: 'R', w: 700, l: 600, x: 9500, y: 7200 });
+    const bottom = wallAt(r.plan, 'h', 7800, r.id!);
+    const door = addOpening(r.plan, bottom, 'door', 9500);
+    const p = valid(moveRoom(door.plan, hall.id!, 0, 0));
+    expect(Object.values(p.openings).map((o) => [o.at, o.width])).toEqual([[9500, 700]]);
+  });
+
+  test('a Room around an island keeps its area when the island lands on a thicker Wall', () => {
+    // The hall surrounds a cupboard, so it takes a ring of its own Walls with it. Moved down until the
+    // ring's bottom face lies on the Outline's outside face, the ring fuses into that thicker Wall.
+    const p0 = base();
+    const c = addRoom(p0, { name: 'Cupboard', w: 1000, l: 1000, x: 2000, y: 2000 });
+    const hall = nameSpace(c.plan, 500, 500, 'Hallway');
+    const area = derive(hall.plan).rooms[hall.id!]!.area;
+    const p = valid(moveRoom(hall.plan, hall.id!, 0, 8000 - 3100));
+    expect(derive(p).rooms[hall.id!]!.area).toBe(area);
+  });
+
+  // An L-shaped hall moved out past a wing's corner: its inside corner fuses into the wing's Walls, and
+  // the part of its own Wall left over meets them only in a short stub of the Outline.
+  test.each([
+    ['top', -1300, -1500],
+    ['left', -1500, -1300]
+  ] as const)('moving by zero keeps the area of a hall wrapped around a %s wing corner', (side, dx, dy) => {
+    const o = addWing(addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 }), side, 1500, 1500);
+    const hall = nameSpace(o, 3000, 2500, 'Hallway');
+    const p = valid(moveRoom(hall.plan, hall.id!, dx, dy));
+    expect(derive(p).rooms[hall.id!]!.area).toBe(derive(hall.plan).rooms[hall.id!]!.area);
+    const q = valid(moveRoom(p, hall.id!, 0, 0));
+    expect(derive(q).rooms[hall.id!]!.rects).toEqual(derive(p).rooms[hall.id!]!.rects);
+  });
+
+  test('moving by zero keeps a corner stub joined to the Wall beside it', () => {
+    // Pulling the wing's inside Wall to 1 mm short of the Outline's right Wall leaves the hall a 51 mm
+    // stub of the top Wall at the corner, with the hall's own Wall re-ending on it.
+    const o = addWing(addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 }), 'top', 1500, 1500);
+    const hall = nameSpace(o, 3000, 2500, 'Hallway');
+    const p = valid(pushWall(hall.plan, wallAt(hall.plan, 'v', 1300, hall.id!), 4500));
+    const q = valid(moveRoom(p, hall.id!, 0, 0));
+    expect(derive(q).rooms[hall.id!]!.rects).toEqual(derive(p).rooms[hall.id!]!.rects);
+  });
+
+  test("moving keeps a hall's corner closed where it wraps around the Outline's corner", () => {
+    // The hall's inside corner lands on the Outline's bottom-right corner: its own Walls fuse into the
+    // right exterior Wall (leaving the hall a stub of it) and then into the bottom one.
+    const o = addWing(addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 }), 'left', 1500, 1500);
+    const hall = nameSpace(o, 3000, 2500, 'Hallway');
+    const area = derive(hall.plan).rooms[hall.id!]!.area;
+    const p = valid(moveRoom(hall.plan, hall.id!, 5400, 3100));
+    const q = valid(moveRoom(p, hall.id!, 400, 400));
+    expect(derive(q).rooms[hall.id!]!.area).toBe(area);
+  });
+
+  test("moving by zero keeps a hall's corner where a thinner Outline Wall was pulled out", () => {
+    // The left exterior Wall is thinned to 150 mm and the hall's side pulled out past it, then the
+    // Outline itself: the hall's corner below the wing is left with 1 mm jogs and a stub of its own Wall.
+    const o = addWing(addOutline(emptyPlan(), 6000, 5000, { x: 0, y: 0 }), 'left', 1500, 1500);
+    const hall = nameSpace(o, 3000, 2500, 'Hallway');
+    let p = pushWall(hall.plan, wallAt(hall.plan, 'h', 200, hall.id!), 0);
+    p = setWallThickness(p, wallAt(p, 'v', 200, hall.id!), 150);
+    p = pushWall(p, wallAt(p, 'v', 150, hall.id!), -50);
+    const left = Object.keys(p.walls).find((id) => {
+      const l = wallLine(p, p.walls[id]!);
+      return p.walls[id]!.exterior && l.axis === 'v' && l.lo === 0 && l.t0 === 1400;
+    })!;
+    p = valid(pushWall(p, left, -50));
+    const q = valid(moveRoom(p, hall.id!, 0, 0));
+    expect(derive(q).rooms[hall.id!]!.rects).toEqual(derive(p).rooms[hall.id!]!.rects);
   });
 
   test('a room dragged across the Outline is crossing it', () => {
@@ -145,6 +238,17 @@ describe('merge, delete, name', () => {
     expect(g.rectangular).toBe(false);
   });
 
+  test('merging can keep the smaller Room when asked, and ignores a Room not in the pair', () => {
+    const { p, a, b } = pair();
+    const wall = wallAt(p, 'v', 4000, a);
+    const m = mergeRooms(p, wall, b);
+    valid(m.plan);
+    expect(m.id).toBe(b);
+    expect(m.plan.rooms[a]).toBeUndefined();
+    expect(m.plan.rooms[b]!.name).toBe('Nook');
+    expect(mergeRooms(p, wall, 'r999').id).toBe(a);
+  });
+
   test('deleting a room leaves its neighbour whole', () => {
     const { p, a, b } = pair();
     const q = valid(deleteRoom(p, b));
@@ -170,6 +274,24 @@ describe('merge, delete, name', () => {
     expect(derive(n.plan).unlabelled).toHaveLength(0);
     expect(derive(n.plan).rooms[n.id!]!.area).toBe((5500 - 4300) * 7600);
     expect(n.plan.rooms[n.id!]!.type).toBe('hallway');
+  });
+
+  test('naming the space around an island Room does not claim the island', () => {
+    const c = addRoom(base(), { name: 'Cupboard', w: 1000, l: 1000, x: 2000, y: 2000 });
+    const n = nameSpace(c.plan, 500, 500, 'Hallway');
+    const D = derive(valid(n.plan));
+    expect(D.rooms[n.id!]!.area).toBe(9600 * 7600 - 1200 * 1200);
+    expect(D.overlaps).toEqual([]);
+  });
+
+  // R's left Wall lies inside the right exterior Wall (at y = 0, all but its top end): the hall is bounded
+  // by the exterior Wall, and R and the hall are on two sides of the Outline.
+  test.each([1000, 0])('naming the space beside a Room buried in the Outline from outside (y = %i)', (y) => {
+    const r = addRoom(base(), { name: 'R', w: 600, l: 600, x: 9900, y });
+    const n = nameSpace(r.plan, 5000, 4000, 'Hallway');
+    valid(n.plan);
+    expect(derive(n.plan).rooms[n.id!]!.area).toBe(9600 * 7600);
+    expect(sharedWalls(n.plan)).toEqual([]);
   });
 
   test('a thin strip is absorbed, not Unlabelled Space', () => {

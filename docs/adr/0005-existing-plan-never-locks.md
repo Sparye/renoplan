@@ -13,3 +13,5 @@ The Existing Plan stays editable for the life of a Project. Because Scenarios ar
 ## Consequences
 
 Capture can be imperfect the first time without penalty. The change model must be able to detect Changes whose target has moved or vanished, and present them as Conflicts.
+
+ADR 0010 reads "moved" as moved beyond recognition: a Wall that moved but still bounds the same Rooms is followed, not a Conflict.

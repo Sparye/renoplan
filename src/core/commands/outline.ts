@@ -34,16 +34,26 @@ export function addWing(p: Plan, side: WingSide, w: Mm, l: Mm): Plan {
   const D = derive(p);
   if (!D.outline || w < MIN_OUTLINE || l < MIN_OUTLINE) return p;
   const o = D.outline.bounds;
-  // Thickness of the exterior Wall along that edge, so the wing's Wall lands exactly on it.
-  const edge = Object.keys(p.walls).find((id) => {
-    if (!p.walls[id]!.exterior) return false;
-    const { axis, lo, hi } = D.walls[id]!.line;
-    if (side === 'right') return axis === 'v' && hi === o.x1;
-    if (side === 'left') return axis === 'v' && lo === o.x0;
-    if (side === 'bottom') return axis === 'h' && hi === o.y1;
-    return axis === 'h' && lo === o.y0;
-  });
-  const t = edge ? p.walls[edge]!.thickness : p.defaults.exterior;
+  // Thickness of the exterior Wall whose outer face lies along an edge of the Outline, near [from, to].
+  const along = (axis: 'h' | 'v', face: 'lo' | 'hi', at: Mm, from: Mm, to: Mm): Mm | null => {
+    for (const id of Object.keys(p.walls)) {
+      if (!p.walls[id]!.exterior) continue;
+      const line = D.walls[id]!.line;
+      if (line.axis === axis && line[face] === at && line.t0 < to && line.t1 > from)
+        return p.walls[id]!.thickness;
+    }
+    return null;
+  };
+  const ext = p.defaults.exterior;
+  // The side the wing is attached on: its Wall lands exactly on the Outline's, so it takes that thickness.
+  const t =
+    (side === 'right'
+      ? along('v', 'hi', o.x1, o.y0, o.y0 + l)
+      : side === 'left'
+        ? along('v', 'lo', o.x0, o.y0, o.y0 + l)
+        : side === 'bottom'
+          ? along('h', 'hi', o.y1, o.x0, o.x0 + w)
+          : along('h', 'lo', o.y0, o.x0, o.x0 + w)) ?? ext;
   // The wing overlaps the Outline by one Wall thickness, so their shared Walls coincide.
   const r =
     side === 'right'
@@ -53,8 +63,20 @@ export function addWing(p: Plan, side: WingSide, w: Mm, l: Mm): Plan {
         : side === 'bottom'
           ? { x0: o.x0, x1: o.x0 + w, y0: o.y1 - t, y1: o.y1 + l }
           : { x0: o.x0, x1: o.x0 + w, y0: o.y0 - l, y1: o.y0 + t };
+  // A side flush with the Outline continues its Wall, so it takes that Wall's thickness: two thicknesses
+  // meeting end to end on one face would make a jog (ADR 0009).
+  const flushH = (face: 'lo' | 'hi', at: Mm) =>
+    r[face === 'lo' ? 'y0' : 'y1'] === at ? along('h', face, at, r.x0, r.x1) : null;
+  const flushV = (face: 'lo' | 'hi', at: Mm) =>
+    r[face === 'lo' ? 'x0' : 'x1'] === at ? along('v', face, at, r.y0, r.y1) : null;
+  const ts = {
+    top: side === 'bottom' ? t : (flushH('lo', o.y0) ?? t),
+    bottom: side === 'top' ? t : (flushH('hi', o.y1) ?? t),
+    left: side === 'right' ? t : (flushV('lo', o.x0) ?? t),
+    right: side === 'left' ? t : (flushV('hi', o.x1) ?? t)
+  };
   const d = clonePlan(p);
-  rectWalls(d, r, t, null, true);
+  rectWalls(d, r, ts, null, true);
   mergeNodes(d);
   splitAtNodes(d);
   // Where the wing meets the Outline, the exterior Walls go: that is floor now. Where a Room is against

@@ -36,7 +36,8 @@ export function Home() {
       name: 'Untitled house',
       createdAt: now,
       updatedAt: now,
-      existingPlan: emptyPlan()
+      existingPlan: emptyPlan(),
+      scenarios: []
     };
     projects.save(project);
     go({ page: 'project', id: project.id });

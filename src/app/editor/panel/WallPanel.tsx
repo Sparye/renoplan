@@ -1,24 +1,14 @@
-import {
-  type Mm,
-  type OpeningKind,
-  type WallId,
-  addOpening,
-  derive,
-  mergeRooms,
-  pushWall,
-  runSides,
-  setStructural,
-  setWallThickness,
-  wallAtPoint,
-  point
-} from '@/core';
+import { type Mm, type OpeningKind, type WallId, derive, runSides, setStructural } from '@/core';
 import { Button } from '@/app/components/ui/button';
-import { useEditorStore } from '../context';
+import { useActions, useEditorStore } from '../context';
+import { currentPlan } from '../store';
 import { Hint, LengthField, Section } from './fields';
 
 export function WallPanel({ id, at }: { id: WallId; at: Mm }) {
   const useEditor = useEditorStore();
-  const plan = useEditor((s) => s.history.present);
+  const act = useActions();
+  const plan = useEditor(currentPlan);
+  const scenario = useEditor((s) => s.mode.kind === 'scenario');
   const commit = useEditor((s) => s.commit);
   const D = derive(plan);
   const wall = plan.walls[id]!;
@@ -29,13 +19,6 @@ export function WallPanel({ id, at }: { id: WallId; at: Mm }) {
   const dim = v ? 'width' : 'length';
   const [negName, posName] = v ? ['Left', 'Right'] : ['Above', 'Below'];
 
-  /** Pushes the Wall and keeps it selected. */
-  const push = (delta: Mm) => {
-    const next = pushWall(plan, id, delta);
-    const q = point(line.axis, at, line.c + delta);
-    const nid = wallAtPoint(next, q.x, q.y);
-    commit(next, nid ? { kind: 'wall', id: nid, at } : null);
-  };
   const size = (room: string) => {
     const b = D.rooms[room]?.bounds;
     return b ? (v ? b.x1 - b.x0 : b.y1 - b.y0) : 0;
@@ -46,20 +29,21 @@ export function WallPanel({ id, at }: { id: WallId; at: Mm }) {
       <LengthField
         aria-label={`${plan.rooms[room]!.name} ${dim}`}
         value={size(room)}
-        onCommit={(n) => push(sign * (n - size(room)))}
+        onCommit={(n) => act.pushWall(id, sign * (n - size(room)), at)}
       />
     </div>
   );
-  const add = (kind: OpeningKind) => {
-    const r = addOpening(plan, id, kind, at);
-    if (r.id) commit(r.plan, { kind: 'opening', id: r.id });
-  };
+  const add = (kind: OpeningKind) => act.addOpening(id, kind, at);
+  const title = wall.drawn
+    ? 'Drawn wall'
+    : sides.exterior
+      ? 'Exterior wall'
+      : shared
+        ? 'Shared wall'
+        : 'Wall';
 
   return (
-    <Section
-      title={sides.exterior ? 'Exterior wall' : shared ? 'Shared wall' : 'Wall'}
-      hint={`${wall.thickness} mm`}
-    >
+    <Section title={title} hint={`${wall.thickness} mm`}>
       {sides.neg.length > 0 && <h3 className="text-muted-foreground text-xs font-medium">{negName}</h3>}
       {sides.neg.map((r) => row(r, 1))}
       {sides.pos.length > 0 && <h3 className="text-muted-foreground text-xs font-medium">{posName}</h3>}
@@ -75,19 +59,29 @@ export function WallPanel({ id, at }: { id: WallId; at: Mm }) {
           unit="mm"
           aria-label="Thickness"
           value={wall.thickness}
-          onCommit={(t) => commit(setWallThickness(plan, id, t))}
+          onCommit={(t) => act.setThickness(id, t)}
         />
       </div>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          className="accent-foreground size-4"
-          checked={wall.structural}
-          onChange={(e) => commit(setStructural(plan, id, e.target.checked))}
-        />
-        Structural mark
-      </label>
-      <Hint>Your belief that this wall is load-bearing — a note, not an engineering assessment.</Hint>
+      {scenario ? (
+        wall.structural && (
+          <p className="text-xs text-amber-700">
+            Marked structural. Demolishing it is flagged; the mark itself is edited in the existing plan.
+          </p>
+        )
+      ) : (
+        <>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="accent-foreground size-4"
+              checked={wall.structural}
+              onChange={(e) => commit(setStructural(plan, id, e.target.checked))}
+            />
+            Structural mark
+          </label>
+          <Hint>Your belief that this wall is load-bearing — a note, not an engineering assessment.</Hint>
+        </>
+      )}
       <h3 className="text-muted-foreground text-xs font-medium">Add at the click point</h3>
       <div className="flex gap-1.5">
         <Button variant="outline" size="sm" onClick={() => add('door')}>
@@ -100,17 +94,17 @@ export function WallPanel({ id, at }: { id: WallId; at: Mm }) {
           Opening
         </Button>
       </div>
-      {shared && !wall.exterior && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            const m = mergeRooms(plan, id);
-            if (m.id) commit(m.plan, { kind: 'room', id: m.id });
-          }}
-        >
-          Remove wall — merge rooms
+      {scenario ? (
+        <Button variant="outline" size="sm" className="text-destructive" onClick={() => act.removeWall(id)}>
+          {shared ? 'Demolish wall — merge rooms' : 'Demolish wall'}
         </Button>
+      ) : (
+        shared &&
+        !wall.exterior && (
+          <Button variant="outline" size="sm" onClick={() => act.removeWall(id)}>
+            Remove wall — merge rooms
+          </Button>
+        )
       )}
     </Section>
   );

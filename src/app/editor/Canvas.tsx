@@ -10,7 +10,8 @@ import {
   applyPush,
   clearances,
   derive,
-  formatArea,
+  drawRoom,
+  drawWall,
   formatMetres,
   moveOpening,
   prepareMove,
@@ -22,9 +23,11 @@ import {
   usableSpan,
   wallAtPoint
 } from '@/core';
-import { useEditorStore } from './context';
-import { Dimension, Label, OpeningShape, TINT, rectsPath } from './drawing';
-import { type Selection, type View, shownPlan } from './store';
+import { NEW_ROOM } from './actions';
+import { useActions, useEditorStore } from './context';
+import { Dimension, Label, rectsPath } from './drawing';
+import { PlanDrawing } from './PlanDrawing';
+import { type Selection, type View, activeApplied, currentPlan, shownPlan } from './store';
 
 /** Snap radius in screen pixels (validated by the prototype). */
 const SNAP_PX = 8;
@@ -37,13 +40,31 @@ type Drag = DragBase &
   (
     | { kind: 'pan'; view0: View; click: Selection | 'keep' }
     | { kind: 'room'; id: string; prep: MovePrep | null }
-    | { kind: 'wall'; id: string; at: Mm; c: Mm; delta: Mm; axis: 'h' | 'v'; prep: PushPrep | null }
-    | { kind: 'opening'; id: string; at0: Mm; axis: 'h' | 'v'; base: Plan }
+    | {
+        kind: 'wall';
+        id: string;
+        at: Mm;
+        c: Mm;
+        delta: Mm;
+        axis: 'h' | 'v';
+        outline: boolean;
+        prep: PushPrep | null;
+      }
+    | { kind: 'opening'; id: string; at0: Mm; at: Mm; axis: 'h' | 'v'; base: Plan }
+    | { kind: 'draw'; a: Pt; b: Pt | null; base: Plan }
+    | { kind: 'drawRoom'; a: Pt; rect: Rect | null; base: Plan }
   );
 
 export function Canvas() {
   const useEditor = useEditorStore();
+  const act = useActions();
   const plan = useEditor(shownPlan);
+  const scenario = useEditor((s) => s.mode.kind === 'scenario');
+  const tool = useEditor((s) => s.tool);
+  const changes = useEditor((s) =>
+    s.mode.kind === 'scenario' && !s.changesHidden[s.mode.id] ? activeApplied(s) : null
+  );
+  const existing = useEditor((s) => s.history.present);
   const selection = useEditor((s) => s.selection);
   const preview = useEditor((s) => s.preview);
   const view = useEditor((s) => s.view);
@@ -106,7 +127,7 @@ export function Canvas() {
     if (e.button === 2) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     const st = useEditor.getState();
-    const base = st.history.present;
+    const base = currentPlan(st);
     const p = toMm(e);
     const hit = (e.target as Element).closest('[data-hit]')?.getAttribute('data-hit') ?? '';
     const b: DragBase = { client: { x: e.clientX, y: e.clientY }, start: p, moved: false };
@@ -114,11 +135,22 @@ export function Canvas() {
       drag.current = { ...b, kind: 'pan', view0: st.view, click: 'keep' };
       return;
     }
+    if (st.tool === 'drawWall') {
+      const a = snapPoint(base, p, SNAP_PX / st.view.s, st.snapStep);
+      drag.current = { ...b, kind: 'draw', a, b: null, base };
+      return;
+    }
+    if (st.tool === 'drawRoom') {
+      const a = snapPoint(base, p, SNAP_PX / st.view.s, st.snapStep);
+      drag.current = { ...b, kind: 'drawRoom', a, rect: null, base };
+      return;
+    }
     const [kind, id] = hit.split(':') as [string, string | undefined];
     if (kind === 'opening' && id && base.openings[id]) {
       st.select({ kind: 'opening', id });
       const axis = derive(base).walls[base.openings[id].wall]!.line.axis;
-      drag.current = { ...b, kind: 'opening', id, at0: base.openings[id].at, axis, base };
+      const at0 = base.openings[id].at;
+      drag.current = { ...b, kind: 'opening', id, at0, at: at0, axis, base };
       return;
     }
     if (kind === 'wall' && id && base.walls[id]) {
@@ -126,12 +158,14 @@ export function Canvas() {
       const at = Math.round(axis === 'h' ? p.x : p.y);
       st.select({ kind: 'wall', id, at });
       const prep = preparePush(base, id, { outline: e.altKey });
-      drag.current = { ...b, kind: 'wall', id, at, c, delta: 0, axis, prep };
+      drag.current = { ...b, kind: 'wall', id, at, c, delta: 0, axis, outline: e.altKey, prep };
       return;
     }
     if (kind === 'room' && id && base.rooms[id]) {
       st.select({ kind: 'room', id });
-      drag.current = { ...b, kind: 'room', id, prep: prepareMove(base, id) };
+      // A Scenario has no Change that moves a Room: dragging inside one pans.
+      if (st.mode.kind === 'scenario') drag.current = { ...b, kind: 'pan', view0: st.view, click: 'keep' };
+      else drag.current = { ...b, kind: 'room', id, prep: prepareMove(base, id) };
       return;
     }
     const click: Selection = kind === 'space' ? { kind: 'space', x: p.x, y: p.y } : null;
@@ -165,10 +199,37 @@ export function Canvas() {
     } else if (d.kind === 'opening') {
       const along = d.axis === 'h' ? dx : dy;
       const step = Math.max(10, Math.round(st.snapStep / 10));
+      d.at = Math.round((d.at0 + along) / step) * step;
+      st.setPreview({ plan: moveOpening(d.base, d.id, d.at), guides: [], clearances: [] });
+    } else if (d.kind === 'draw') {
+      // Straight along whichever way the pointer went further; the end snaps to a Wall across its way.
+      const axis = Math.abs(p.x - d.a.x) >= Math.abs(p.y - d.a.y) ? 'h' : 'v';
+      const threshold = SNAP_PX / st.view.s;
+      const end =
+        axis === 'h'
+          ? { x: snapAlong(d.base, 'v', p.x, threshold, st.snapStep), y: d.a.y }
+          : { x: d.a.x, y: snapAlong(d.base, 'h', p.y, threshold, st.snapStep) };
+      d.b = end.x === d.a.x && end.y === d.a.y ? null : end;
+      const drawn = d.b ? drawWall(d.base, d.a, d.b).plan : d.base;
+      const measure = d.b ? { a: d.a, b: d.b } : undefined;
+      st.setPreview({ plan: drawn, guides: [], clearances: [], measure });
+    } else if (d.kind === 'drawRoom') {
+      // The corner opposite the start snaps onto Walls too, so the Room's sides land on the Walls there.
+      const b = snapPoint(d.base, p, SNAP_PX / st.view.s, st.snapStep);
+      const rect = {
+        x0: Math.min(d.a.x, b.x),
+        y0: Math.min(d.a.y, b.y),
+        x1: Math.max(d.a.x, b.x),
+        y1: Math.max(d.a.y, b.y)
+      };
+      d.rect = rect.x1 > rect.x0 && rect.y1 > rect.y0 ? rect : null;
+      const r = d.rect ? drawRoom(d.base, d.rect, NEW_ROOM) : { plan: d.base, id: null };
+      const room = r.id ? (derive(r.plan).rooms[r.id]?.bounds ?? null) : null;
       st.setPreview({
-        plan: moveOpening(d.base, d.id, Math.round((d.at0 + along) / step) * step),
+        plan: r.plan,
         guides: [],
-        clearances: []
+        clearances: [],
+        drawing: d.rect ? { rect: d.rect, room } : undefined
       });
     }
   };
@@ -185,6 +246,21 @@ export function Canvas() {
     const pv = st.preview;
     if (!d.moved || !pv) {
       st.setPreview(null);
+      return;
+    }
+    if (d.kind === 'draw') {
+      if (!d.b || !act.drawWall(d.a, d.b)) st.setPreview(null);
+      return;
+    }
+    if (d.kind === 'drawRoom') {
+      if (!d.rect || !act.drawRoom(d.rect)) st.setPreview(null);
+      return;
+    }
+    if (st.mode.kind === 'scenario') {
+      // In a Scenario the gesture is recorded as a Change, which replays it on the Scenario's plan.
+      if (d.kind === 'wall') act.pushWall(d.id, d.delta, d.at, d.outline);
+      else if (d.kind === 'opening') act.updateOpening(d.id, { at: d.at });
+      else st.setPreview(null);
       return;
     }
     if (d.kind === 'wall') {
@@ -211,16 +287,16 @@ export function Canvas() {
   const selRoom = sel?.kind === 'room' ? D.rooms[sel.id] : undefined;
   const selRun = sel?.kind === 'wall' && plan.walls[sel.id] ? runOf(plan, sel.id) : [];
   const selSpace = sel?.kind === 'space' ? D.unlabelled[D.spaceAt(sel.x, sel.y)] : undefined;
-  const crossing = new Set(D.crossing);
-  const parked = new Set(D.parked);
-  const outline = D.outline?.bounds;
   const dragging = !!preview;
 
   return (
     <svg
       ref={svg}
       className="absolute inset-0 h-full w-full touch-none select-none"
-      style={{ background: 'var(--plan-paper)', cursor: dragging ? 'grabbing' : 'default' }}
+      style={{
+        background: 'var(--plan-paper)',
+        cursor: tool !== 'select' ? 'crosshair' : dragging ? 'grabbing' : 'default'
+      }}
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
@@ -228,205 +304,106 @@ export function Canvas() {
       onContextMenu={(e) => e.preventDefault()}
       data-testid="canvas"
     >
-      <defs>
-        <pattern
-          id="hatch"
-          patternUnits="userSpaceOnUse"
-          width="250"
-          height="250"
-          patternTransform="rotate(45)"
-        >
-          <rect width="250" height="250" fill="var(--plan-unlabelled)" />
-          <line x1="0" y1="0" x2="0" y2="250" stroke="var(--plan-unlabelled-line)" strokeWidth="40" />
-        </pattern>
-        <pattern
-          id="structural"
-          patternUnits="userSpaceOnUse"
-          width="80"
-          height="80"
-          patternTransform="rotate(45)"
-        >
-          <rect width="80" height="80" fill="var(--plan-wall)" />
-          <line x1="0" y1="0" x2="0" y2="80" stroke="#9aa1ab" strokeWidth="18" />
-        </pattern>
-      </defs>
       <g transform={`translate(${view.tx} ${view.ty}) scale(${view.s})`}>
-        <path
-          d={gridPath}
-          stroke="var(--plan-grid)"
-          strokeWidth={1}
-          vectorEffect="non-scaling-stroke"
-          fill="none"
-        />
-
-        {Object.entries(D.rooms).map(([id, g]) => (
-          <path
-            key={id}
-            d={rectsPath(g.rects)}
-            fill={TINT[plan.rooms[id]!.type]}
-            stroke={crossing.has(id) ? 'var(--plan-overlap)' : parked.has(id) ? '#8b939e' : 'none'}
-            strokeDasharray={crossing.has(id) || parked.has(id) ? '6 4' : undefined}
-            strokeWidth={1.5}
-            vectorEffect="non-scaling-stroke"
-            data-hit={`room:${id}`}
-            style={{ cursor: 'move' }}
-          />
-        ))}
-
-        {D.unlabelled.map((s, i) => (
-          <path key={i} d={rectsPath(s.rects)} fill="url(#hatch)" data-hit="space" />
-        ))}
-
-        <path d={rectsPath(D.slivers)} fill="var(--plan-wall)" pointerEvents="none" />
-        {Object.entries(D.walls).map(([id, g]) => {
-          const r = g.rect;
-          const horizontal = g.line.axis === 'h';
-          return (
-            <rect
-              key={id}
-              x={r.x0}
-              y={r.y0}
-              width={r.x1 - r.x0}
-              height={r.y1 - r.y0}
-              fill={plan.walls[id]!.structural ? 'url(#structural)' : 'var(--plan-wall)'}
-              stroke="transparent"
-              strokeWidth={10}
+        <PlanDrawing
+          plan={plan}
+          s={view.s}
+          changes={changes && { existing, statuses: changes.statuses }}
+          interactive
+          roomsMove={!scenario}
+          dragging={dragging}
+          selectedOpening={sel?.kind === 'opening' ? sel.id : null}
+          under={
+            <path
+              d={gridPath}
+              stroke="var(--plan-grid)"
+              strokeWidth={1}
               vectorEffect="non-scaling-stroke"
-              data-hit={`wall:${id}`}
-              style={{ cursor: horizontal ? 'ns-resize' : 'ew-resize' }}
+              fill="none"
             />
-          );
-        })}
-
-        {Object.entries(plan.openings).map(([id, o]) => {
-          const g = D.walls[o.wall];
-          return g ? (
-            <OpeningShape
-              key={id}
-              id={id}
-              o={o}
-              line={g.line}
-              selected={sel?.kind === 'opening' && sel.id === id}
-            />
-          ) : null;
-        })}
-
-        <path d={rectsPath(D.overlaps)} fill="var(--plan-overlap)" fillOpacity={0.4} pointerEvents="none" />
-
-        {selRoom && (
-          <path
-            d={rectsPath(selRoom.rects)}
-            fill="var(--plan-select)"
-            fillOpacity={0.07}
-            stroke="var(--plan-select)"
-            strokeWidth={2}
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-          />
-        )}
-        {selRun.map((id) => {
-          const r = D.walls[id]!.rect;
-          return (
-            <rect
-              key={id}
-              x={r.x0}
-              y={r.y0}
-              width={r.x1 - r.x0}
-              height={r.y1 - r.y0}
-              fill="var(--plan-select)"
-              fillOpacity={0.75}
-              pointerEvents="none"
-            />
-          );
-        })}
-        {selSpace && (
-          <path
-            d={rectsPath(selSpace.rects)}
-            fill="none"
-            stroke="var(--plan-select)"
-            strokeWidth={2}
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-          />
-        )}
-
-        {outline && !dragging && (
-          <>
-            <Dimension axis="h" a={outline.x0} b={outline.x1} at={outline.y0} offset={-px(28)} px={px} />
-            <Dimension axis="v" a={outline.y0} b={outline.y1} at={outline.x0} offset={-px(28)} px={px} />
-          </>
-        )}
-        {selRoom?.rectangular && selRoom.bounds && !dragging && <RoomDimensions r={selRoom.bounds} px={px} />}
-        {sel?.kind === 'opening' && plan.openings[sel.id] && (
-          <OpeningDimensions plan={plan} id={sel.id} px={px} />
-        )}
-
-        <g pointerEvents="none">
-          {Object.entries(D.rooms).map(([id, g]) => {
-            if (!g.label || !g.bounds) return null;
-            const big = g.rects.reduce((a, b) =>
-              Math.min(b.x1 - b.x0, b.y1 - b.y0) > Math.min(a.x1 - a.x0, a.y1 - a.y0) ? b : a
-            );
-            const roomy = Math.min(big.x1 - big.x0, big.y1 - big.y0) * view.s > 70;
-            const { x, y } = g.label;
-            return (
-              <g key={id}>
-                <Label x={x} y={y - px(roomy ? 10 : 0)} size={13} px={px} weight={600}>
-                  {plan.rooms[id]!.name}
-                </Label>
-                {roomy && (
-                  <Label x={x} y={y + px(6)} size={11} px={px} fill="var(--plan-ink-soft)">
-                    {formatArea(g.area)} m²
-                  </Label>
-                )}
-                {roomy && g.rectangular && (
-                  <Label x={x} y={y + px(20)} size={10} px={px} fill="#8b939e">
-                    {formatMetres(g.bounds.x1 - g.bounds.x0)} × {formatMetres(g.bounds.y1 - g.bounds.y0)}
-                  </Label>
-                )}
-              </g>
-            );
-          })}
-          {D.unlabelled.map((s, i) => (
-            <g key={i}>
-              <Label x={s.label.x} y={s.label.y - px(7)} size={11} px={px} weight={600} fill="#8a8577">
-                Unlabelled
-              </Label>
-              <Label x={s.label.x} y={s.label.y + px(8)} size={11} px={px} fill="#8a8577">
-                {formatArea(s.area)} m²
-              </Label>
-            </g>
-          ))}
-          {preview?.guides.map((g, i) => {
-            const ext = px(24);
-            return g.axis === 'v' ? (
-              <line
-                key={i}
-                x1={g.c}
-                x2={g.c}
-                y1={g.a - ext}
-                y2={g.b + ext}
-                stroke="var(--plan-guide)"
-                strokeWidth={1}
-                vectorEffect="non-scaling-stroke"
-              />
-            ) : (
-              <line
-                key={i}
-                y1={g.c}
-                y2={g.c}
-                x1={g.a - ext}
-                x2={g.b + ext}
-                stroke="var(--plan-guide)"
-                strokeWidth={1}
-                vectorEffect="non-scaling-stroke"
-              />
-            );
-          })}
-          {preview?.clearances.map((c, i) => (
-            <ClearanceLine key={i} c={c} px={px} />
-          ))}
-        </g>
+          }
+          overlay={
+            <>
+              {selRoom && (
+                <path
+                  d={rectsPath(selRoom.rects)}
+                  fill="var(--plan-select)"
+                  fillOpacity={0.07}
+                  stroke="var(--plan-select)"
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              )}
+              {selRun.map((id) => {
+                const r = D.walls[id]!.rect;
+                return (
+                  <rect
+                    key={id}
+                    x={r.x0}
+                    y={r.y0}
+                    width={r.x1 - r.x0}
+                    height={r.y1 - r.y0}
+                    fill="var(--plan-select)"
+                    fillOpacity={0.75}
+                    pointerEvents="none"
+                  />
+                );
+              })}
+              {selSpace && (
+                <path
+                  d={rectsPath(selSpace.rects)}
+                  fill="none"
+                  stroke="var(--plan-select)"
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                  pointerEvents="none"
+                />
+              )}
+              {selRoom?.rectangular && selRoom.bounds && !dragging && (
+                <RoomDimensions r={selRoom.bounds} px={px} />
+              )}
+              {preview?.measure && <DrawDimension {...preview.measure} px={px} />}
+              {preview?.drawing && <DrawingRoom {...preview.drawing} px={px} />}
+              {sel?.kind === 'opening' && plan.openings[sel.id] && (
+                <OpeningDimensions plan={plan} id={sel.id} px={px} />
+              )}
+            </>
+          }
+          top={
+            <>
+              {preview?.guides.map((g, i) => {
+                const ext = px(24);
+                return g.axis === 'v' ? (
+                  <line
+                    key={i}
+                    x1={g.c}
+                    x2={g.c}
+                    y1={g.a - ext}
+                    y2={g.b + ext}
+                    stroke="var(--plan-guide)"
+                    strokeWidth={1}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : (
+                  <line
+                    key={i}
+                    y1={g.c}
+                    y2={g.c}
+                    x1={g.a - ext}
+                    x2={g.b + ext}
+                    stroke="var(--plan-guide)"
+                    strokeWidth={1}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                );
+              })}
+              {preview?.clearances.map((c, i) => (
+                <ClearanceLine key={i} c={c} px={px} />
+              ))}
+            </>
+          }
+        />
       </g>
     </svg>
   );
@@ -488,6 +465,53 @@ function ClearanceLine({ c, px }: { c: Clearance; px: (n: number) => number }) {
       >
         {label}
       </Label>
+    </g>
+  );
+}
+
+/** Snaps a coordinate to the nearest centreline of Walls along `axis` within the threshold, else the grid. */
+function snapAlong(p: Plan, axis: 'h' | 'v', v: number, threshold: number, grid: number): Mm {
+  let best: number | null = null;
+  for (const g of Object.values(derive(p).walls))
+    if (
+      g.line.axis === axis &&
+      Math.abs(g.line.c - v) <= threshold &&
+      (best === null || Math.abs(g.line.c - v) < Math.abs(best - v))
+    )
+      best = g.line.c;
+  return best ?? Math.round(v / grid) * grid;
+}
+
+/** Where a drawn Wall starts: on a Wall's centreline when near one (so it joins it), else on the grid. */
+function snapPoint(p: Plan, q: Pt, threshold: number, grid: number): Pt {
+  return { x: snapAlong(p, 'v', q.x, threshold, grid), y: snapAlong(p, 'h', q.y, threshold, grid) };
+}
+
+/** The live length of a Wall being drawn. */
+function DrawDimension({ a, b, px }: { a: Pt; b: Pt; px: (n: number) => number }) {
+  const axis = a.y === b.y ? 'h' : 'v';
+  const [t0, t1] =
+    axis === 'h' ? [Math.min(a.x, b.x), Math.max(a.x, b.x)] : [Math.min(a.y, b.y), Math.max(a.y, b.y)];
+  const at = axis === 'h' ? a.y : a.x;
+  return <Dimension axis={axis} a={t0} b={t1} at={at} offset={-px(22)} px={px} color="var(--plan-select)" />;
+}
+
+/** A Room being drawn: the rectangle, and the inside W × L of the Room it makes (red if it makes none). */
+function DrawingRoom({ rect, room, px }: { rect: Rect; room: Rect | null; px: (n: number) => number }) {
+  return (
+    <g pointerEvents="none">
+      <rect
+        x={rect.x0}
+        y={rect.y0}
+        width={rect.x1 - rect.x0}
+        height={rect.y1 - rect.y0}
+        fill="none"
+        stroke={room ? 'var(--plan-select)' : 'var(--plan-overlap)'}
+        strokeWidth={1}
+        strokeDasharray="5 4"
+        vectorEffect="non-scaling-stroke"
+      />
+      {room && <RoomDimensions r={room} px={px} />}
     </g>
   );
 }
