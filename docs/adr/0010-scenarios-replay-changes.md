@@ -41,12 +41,12 @@ ADR 0001 makes a Scenario a set of Changes to the Existing Plan. ADR 0005 keeps 
 - Existing Plan corrections flow into every Scenario: renumbering, splitting, merging, small moves, thickness changes, and new Rooms or Openings. Property tests cover this.
 - Replaying costs one command per Change on every Existing Plan or Scenario edit. That is cheap at house scale, and the result is memoised per object pair.
 - The UI must not keep ids of Scenario-created elements across Existing Plan edits. It re-selects by what it sees, just as it already does after capture commands.
-- Comparison's counts (Walls demolished, Structural Marks touched, Extension area) come from the Change Status diff.
+- Comparison's counts (Walls demolished, Structural Marks touched) come from the Change Status diff. Extension area comes from the Footprints (ADR 0012).
 
 Deferred:
 
 - A drawn Wall's ends are where they were drawn. It doesn't follow a correction to the Wall it was drawn to, so a corrected Existing Plan can leave it short of that Wall or poking past it.
-- Demolishing an exterior Wall (for an Extension), or a Room's Wall onto Unlabelled Space, is refused by the soundness check. Revisit with Extensions.
+- ~~Demolishing an exterior Wall (for an Extension)~~: done in ADR 0012. An Extension joins the Scenario's Outline, so the Wall it is against is interior, and demolishing it merges the two Rooms. Demolishing a Room's Wall onto Unlabelled Space is still refused by the soundness check.
 - The Show Changes toggle is UI state and is not stored.
 - Coalescing consecutive Changes to the same element (e.g. dragging an Opening twice), and the Conflict-resolution UI.
 - Pre-existing capture bugs found by the property tests, being fixed on the parent branch. Moving a Room against an L-shaped Outline by nothing, or with snapping, can change its area by 0.005–0.01 m². One case is pinned in `rooms.test.ts` as a test marked failing until fixed: after a top wing and a push of the Outline, snapping a named space 1 mm changes its area by 100 mm². Also seen: `pushWall` throwing "wall is not orthogonal" after two right wings.

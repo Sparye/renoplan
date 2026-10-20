@@ -518,7 +518,7 @@ function record(existing: Plan, gestures: readonly G[]): Scenario {
 
 /**
  * Scenario gestures, and how many of them the soundness backstop refused. Extension gestures are counted
- * apart: the others' rate (about 2%, mostly pushes) predates them.
+ * apart: the others' rate (about 1.6%, mostly pushes) predates them.
  */
 const scenarioGestures = { count: 0, rejected: 0 };
 const extensionGestures = { count: 0, rejected: 0 };
