@@ -8,8 +8,10 @@ import {
   type Target,
   changeKind,
   derive,
+  extensionOf,
   formatArea,
-  formatMetres
+  formatMetres,
+  rectsArea
 } from '@/core';
 import { Button } from '@/app/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip';
@@ -113,6 +115,10 @@ export function ScenarioPanel() {
             inside a room to carve one out of it
           </li>
           <li>
+            <b className="text-foreground">Draw room outside</b> — an extension; demolish the wall it is
+            against to open the house into it
+          </li>
+          <li>
             <b className="text-foreground">Click unlabelled space</b> — make all of it a room
           </li>
           <li>⌘Z / ⇧⌘Z undo/redo this scenario · Esc</li>
@@ -129,6 +135,7 @@ function Summary({ existing, result }: { existing: Plan; result: Applied }) {
   const demolished = Object.entries(result.statuses.demolished).filter(([, ss]) => length(ss) > 0);
   const gone = demolished.reduce((s, [, ss]) => s + length(ss), 0);
   const structural = demolished.filter(([id]) => existing.walls[id]?.structural).length;
+  const extension = rectsArea(extensionOf(existing, result.plan));
   const built = Object.values(result.statuses.walls)
     .flat()
     .filter((s) => s.status === 'new');
@@ -153,7 +160,16 @@ function Summary({ existing, result }: { existing: Plan; result: Applied }) {
         </dd>
         <dt className="text-muted-foreground">New walls</dt>
         <dd className="tabular-nums">{formatMetres(length(built))} m</dd>
+        <dt className="text-muted-foreground">Extension area</dt>
+        <dd className={cn('tabular-nums', extension > 0 && 'text-violet-700')} data-testid="extension-area">
+          {formatArea(extension)} m²
+        </dd>
       </dl>
+      {extension > 0 && (
+        <p className="text-xs text-violet-700">
+          Extends {formatArea(extension)} m² beyond the existing plan&rsquo;s footprint.
+        </p>
+      )}
       {structural > 0 && (
         <p className="text-xs text-amber-700">
           Demolishes {structural} wall{structural === 1 ? '' : 's'} marked structural.

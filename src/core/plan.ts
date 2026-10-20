@@ -146,3 +146,9 @@ export function sideOf(w: Wall, room: RoomId): Side | null {
 }
 
 export const claims = (w: Wall, room: RoomId): boolean => w.neg === room || w.pos === room;
+
+/**
+ * An Extension's outer Wall (ADR 0012): part of the Outline, but drawn in a Scenario. Capture never draws,
+ * so every Outline Wall of an Existing Plan is measured; an Extension's is being designed, so it moves.
+ */
+export const extensionWall = (w: Wall): boolean => w.exterior && w.drawn;

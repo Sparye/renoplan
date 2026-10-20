@@ -11,6 +11,7 @@ import {
   type Side,
   type WallId,
   clonePlan,
+  extensionWall,
   faceOf,
   faceOffsets,
   mintId,
@@ -41,7 +42,8 @@ export interface PushPrep {
  * Wall, and normal form fuses everything back afterwards.
  *
  * The Outline is measured: an exterior run with Rooms against it stays put and only the Rooms' copies
- * move — unless `outline` is set (⌥-drag), or nothing is against it.
+ * move — unless `outline` is set (⌥-drag), or nothing is against it. An Extension's outer Wall is being
+ * designed, not measured, so it moves like a Room's own Wall (ADR 0012).
  */
 export function preparePush(p: Plan, wallId: WallId, opts: { outline?: boolean } = {}): PushPrep | null {
   if (!p.walls[wallId]) return null;
@@ -67,7 +69,7 @@ export function preparePush(p: Plan, wallId: WallId, opts: { outline?: boolean }
     const id = live(id0);
     const w = d.walls[id];
     if (!w) continue;
-    if (w.exterior) {
+    if (w.exterior && !extensionWall(w)) {
       if (opts.outline || !rooms.size) run.add(id);
     } else if (!claimsNone(w) || bare.includes(id)) run.add(id);
     else {

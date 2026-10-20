@@ -1,7 +1,8 @@
 import { derive } from '../derive';
-import { type Rect, intersects } from '../grid';
+import { type Rect, intersects, rectsArea } from '../grid';
 import { type Plan, type RoomId, wallLine } from '../plan';
 import type { Mm } from '../units';
+import { extensionOf } from './extension';
 import { type ChangeStatuses, type Stretch, union } from './status';
 
 // What a Comparison's summary table says about one side: a plan against the Existing Plan, read from
@@ -131,7 +132,7 @@ export function summarize(existing: Plan, side: ComparisonSide): PlanSummary {
     demolished: tally(demolished),
     structural: tally(structural),
     newWalls: tally(built).length,
-    extensionArea: D.footprint.area - overlap(D.footprint.rects, E.footprint.rects)
+    extensionArea: rectsArea(extensionOf(existing, plan))
   };
 }
 

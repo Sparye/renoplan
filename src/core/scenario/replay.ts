@@ -1,7 +1,9 @@
 import {
   addOpening,
+  annexRoom,
   deleteOpening,
   drawRoom,
+  drawRoomThickness,
   drawWall,
   mergeRooms,
   moveOpening,
@@ -156,8 +158,9 @@ function run(p: Plan, c: Change, lookup: Lookup): Outcome {
         return at === undefined || !q.openings[id] ? q : moveOpening(q, id, at);
       });
     case 'nameSpace': {
+      // In a Scenario, a space named outside the Outline is an Extension (ADR 0012).
       const res = nameSpace(p, c.x, c.y, c.name);
-      return { plan: res.plan, created: res.id };
+      return { plan: res.id ? annexRoom(res.plan, res.id) : res.plan, created: res.id };
     }
     case 'drawRoom': {
       const res = drawRoom(p, c.rect, c.name, c.thickness);
@@ -349,7 +352,8 @@ function toChange(existing: Plan, r: Replay, g: Gesture, id: ChangeId): Change |
         x1: Math.round(Math.max(x0, x1)),
         y1: Math.round(Math.max(y0, y1))
       };
-      return { id, op: g.op, rect, name: g.name, thickness: Math.round(g.thickness ?? p.defaults.interior) };
+      const thickness = Math.round(g.thickness ?? drawRoomThickness(p, rect));
+      return { id, op: g.op, rect, name: g.name, thickness };
     }
     case 'renameRoom': {
       const t = room(g.room);

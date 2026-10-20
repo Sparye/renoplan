@@ -51,7 +51,7 @@ The outer boundary of the Existing Plan.
 _Avoid_: bounds, shell
 
 **Extension**:
-Any part of a Scenario that lies outside the Footprint. Allowed, and always flagged in the UI.
+Any part of a Scenario that lies outside the Footprint. Allowed, and always flagged in the UI. A Room drawn outside the Outline joins the Scenario's Outline. The Wall it is against stays as an interior Wall, and demolishing it opens the house into the Extension. An Extension's outer Walls are being designed, not measured, so dragging one moves it (ADR 0012).
 _Avoid_: addition (ambiguous with a New element)
 
 **Wall**:

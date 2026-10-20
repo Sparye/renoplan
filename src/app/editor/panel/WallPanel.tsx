@@ -1,4 +1,12 @@
-import { type Mm, type OpeningKind, type WallId, derive, runSides, setStructural } from '@/core';
+import {
+  type Mm,
+  type OpeningKind,
+  type WallId,
+  derive,
+  extensionWall,
+  runSides,
+  setStructural
+} from '@/core';
 import { Button } from '@/app/components/ui/button';
 import { useActions, useEditorStore } from '../context';
 import { currentPlan } from '../store';
@@ -34,13 +42,17 @@ export function WallPanel({ id, at }: { id: WallId; at: Mm }) {
     </div>
   );
   const add = (kind: OpeningKind) => act.addOpening(id, kind, at);
-  const title = wall.drawn
-    ? 'Drawn wall'
-    : sides.exterior
-      ? 'Exterior wall'
-      : shared
-        ? 'Shared wall'
-        : 'Wall';
+  // An Extension's outer Wall is being designed, not measured: it moves (ADR 0012).
+  const extension = extensionWall(wall);
+  const title = extension
+    ? 'Extension wall'
+    : wall.drawn
+      ? 'Drawn wall'
+      : sides.exterior
+        ? 'Exterior wall'
+        : shared
+          ? 'Shared wall'
+          : 'Wall';
 
   return (
     <Section title={title} hint={`${wall.thickness} mm`}>
@@ -49,9 +61,11 @@ export function WallPanel({ id, at }: { id: WallId; at: Mm }) {
       {sides.pos.length > 0 && <h3 className="text-muted-foreground text-xs font-medium">{posName}</h3>}
       {sides.pos.map((r) => row(r, -1))}
       <Hint>
-        {sides.exterior
-          ? 'Editing a dimension resizes the room; the outline stays as measured. ⌥-drag moves the outline itself.'
-          : 'Editing a dimension moves this wall; rooms on the other side follow.'}
+        {extension
+          ? 'Editing a dimension moves this wall: the extension grows or shrinks.'
+          : sides.exterior
+            ? 'Editing a dimension resizes the room; the outline stays as measured. ⌥-drag moves the outline itself.'
+            : 'Editing a dimension moves this wall; rooms on the other side follow.'}
       </Hint>
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm">Thickness</span>

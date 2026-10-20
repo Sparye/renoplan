@@ -65,7 +65,13 @@ export function chooseScale(extents: readonly (Box | null)[], area: { w: number;
 /** One pane's drawing, standalone, in plan millimetres at `k` px per mm. */
 function drawing(plan: Plan, pane: Pane, k: number, index: number): string {
   const markup = renderToStaticMarkup(
-    <PlanDrawing plan={plan} s={k} changes={pane.changes ?? null} interactive={false} />,
+    <PlanDrawing
+      plan={plan}
+      s={k}
+      changes={pane.changes ?? null}
+      extension={pane.extension ?? null}
+      interactive={false}
+    />,
     { identifierPrefix: `pane${index}-` }
   );
   return flattenDrawing(markup, k);
@@ -94,30 +100,60 @@ function Text(props: {
   );
 }
 
-/** Retained, Demolished and New Walls, as Show Changes draws them. */
-function Legend({ x, y }: { x: number; y: number }) {
+/** Retained, Demolished and New Walls, as Show Changes draws them, and Extension floor if there is any. */
+function Legend({
+  x,
+  y,
+  changes,
+  extension
+}: {
+  x: number;
+  y: number;
+  changes: boolean;
+  extension: boolean;
+}) {
   const swatch = { y: y - 9, width: 22, height: 10 };
+  const ex = changes ? x + 280 : x;
   return (
     <g data-testid="legend">
-      <rect x={x} {...swatch} fill={TOKENS['plan-wall']} />
-      <Text x={x + 28} y={y} size={11} fill={C.soft}>
-        Retained
-      </Text>
-      <rect
-        x={x + 96}
-        {...swatch}
-        fill={C.paper}
-        stroke={TOKENS['plan-demolished']}
-        strokeWidth={1.25}
-        strokeDasharray="5 4"
-      />
-      <Text x={x + 124} y={y} size={11} fill={C.soft}>
-        Demolished
-      </Text>
-      <rect x={x + 206} {...swatch} fill={TOKENS['plan-new']} />
-      <Text x={x + 234} y={y} size={11} fill={C.soft}>
-        New
-      </Text>
+      {changes && (
+        <>
+          <rect x={x} {...swatch} fill={TOKENS['plan-wall']} />
+          <Text x={x + 28} y={y} size={11} fill={C.soft}>
+            Retained
+          </Text>
+          <rect
+            x={x + 96}
+            {...swatch}
+            fill={C.paper}
+            stroke={TOKENS['plan-demolished']}
+            strokeWidth={1.25}
+            strokeDasharray="5 4"
+          />
+          <Text x={x + 124} y={y} size={11} fill={C.soft}>
+            Demolished
+          </Text>
+          <rect x={x + 206} {...swatch} fill={TOKENS['plan-new']} />
+          <Text x={x + 234} y={y} size={11} fill={C.soft}>
+            New
+          </Text>
+        </>
+      )}
+      {extension && (
+        <>
+          <rect
+            x={ex}
+            {...swatch}
+            fill={C.paper}
+            stroke={TOKENS['plan-extension']}
+            strokeWidth={1.25}
+            strokeDasharray="8 4"
+          />
+          <Text x={ex + 28} y={y} size={11} fill={C.soft}>
+            Extension
+          </Text>
+        </>
+      )}
     </g>
   );
 }
@@ -178,7 +214,8 @@ export function buildSheet(sheet: Sheet): SheetPage {
   const bottom = H - MARGIN - tableH;
   const n = sheet.panes.length;
   const paneW = (inner - GAP * (n - 1)) / n;
-  const legend = sheet.panes.some((p) => p.changes) ? LEGEND : 0;
+  const extended = (p: Pane) => !!p.extension?.length;
+  const legend = sheet.panes.some((p) => p.changes || extended(p)) ? LEGEND : 0;
   const area = { w: paneW, h: bottom - top - CAPTION - legend };
   const extents = sheet.panes.map(extent);
   const scale = chooseScale(extents, area);
@@ -224,7 +261,9 @@ export function buildSheet(sheet: Sheet): SheetPage {
             Nothing drawn yet
           </Text>
         )}
-        {pane.changes && <Legend x={x} y={y + area.h + 20} />}
+        {(pane.changes || extended(pane)) && (
+          <Legend x={x} y={y + area.h + 20} changes={!!pane.changes} extension={extended(pane)} />
+        )}
       </g>
     );
   });

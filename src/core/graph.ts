@@ -106,7 +106,8 @@ export function runOf(p: Plan, id: WallId, inc: Map<NodeId, WallId[]> = incidenc
     const a = p.walls[x]!;
     const b = p.walls[y]!;
     return (
-      (a.exterior && b.exterior) ||
+      // The Outline continues, but not from an Existing Plan Wall into an Extension's (ADR 0012).
+      (a.exterior && b.exterior && a.drawn === b.drawn) ||
       (a.neg !== null && a.neg === b.neg) ||
       (a.pos !== null && a.pos === b.pos) ||
       (a.neg === b.neg && a.pos === b.pos)

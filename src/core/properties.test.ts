@@ -21,10 +21,10 @@ import {
 } from './commands';
 import { rejections } from './commands/edit';
 import { derive } from './derive';
-import { Grid, type Rect, intersects } from './grid';
+import { Grid, type Rect, intersects, rectsArea } from './grid';
 import { normalize } from './normalize';
 import { checkPlan } from './invariants';
-import { type Plan, clonePlan, emptyPlan, wallLine } from './plan';
+import { type Plan, clonePlan, emptyPlan, extensionWall, wallLine } from './plan';
 import {
   type Change,
   type Gesture,
@@ -32,6 +32,7 @@ import {
   type Target,
   applyScenario,
   emptyScenario,
+  extensionOf,
   recordChange
 } from './scenario';
 import { type Stretch, union } from './scenario/status';
@@ -244,6 +245,25 @@ test('moving a Room by nothing changes nothing the user can see', () => {
 // Random capture sessions, then random Scenario Mode gestures recorded over them, then more Existing Plan
 // edits underneath: replaying never throws, stays valid, and Conflicts arise only from real edits.
 
+// Extensions (ADR 0012): a Room drawn against the outside of an exterior Wall, or free-standing beyond the
+// plan; and demolishing exterior Walls, or the Wall an Extension is against.
+const extend = fc.record({
+  k: fc.constant('extend' as const),
+  i: fc.nat(),
+  t: fc.double({ min: 0, max: 1, noNaN: true }),
+  w: len(1000, 5000),
+  d: len(1000, 4000)
+});
+const shed = fc.record({
+  k: fc.constant('shed' as const),
+  below: fc.boolean(),
+  f: fc.double({ min: 0, max: 1, noNaN: true }),
+  gap: len(300, 3000),
+  w: len(1000, 4000),
+  l: len(1000, 4000)
+});
+const open = fc.record({ k: fc.constant('open' as const), i: fc.nat() });
+
 const gesture = fc.oneof(
   { weight: 3, arbitrary: fc.record({ k: fc.constant('demolish' as const), i: fc.nat() }) },
   {
@@ -293,9 +313,20 @@ const gesture = fc.oneof(
       l: len(300, 5000)
     })
   },
-  { weight: 1, arbitrary: fc.record({ k: fc.constant('rename' as const), i: fc.nat() }) }
+  { weight: 1, arbitrary: fc.record({ k: fc.constant('rename' as const), i: fc.nat() }) },
+  { weight: 2, arbitrary: extend },
+  { weight: 1, arbitrary: shed },
+  { weight: 2, arbitrary: open }
 );
 type G = typeof gesture extends fc.Arbitrary<infer T> ? T : never;
+
+/** Sessions that mostly build Extensions and open the house into them, among any other gestures. */
+const extensionGesture = fc.oneof(
+  { weight: 4, arbitrary: extend },
+  { weight: 1, arbitrary: shed },
+  { weight: 3, arbitrary: open },
+  { weight: 4, arbitrary: gesture }
+);
 
 /** The point to name an Unlabelled Space at: the middle of its widest rectangle. */
 function spacePoint(p: Plan, i: number) {
@@ -374,6 +405,48 @@ function toGesture(p: Plan, g: G): Gesture | null {
       const r = pick(Object.keys(p.rooms), g.i);
       return r ? { op: 'renameRoom', room: r, name: `Room ${g.i}` } : null;
     }
+    case 'extend': {
+      // One side of the rectangle on an exterior Wall's centreline, the rest outside the Outline.
+      const D = derive(p);
+      // Mostly against a Room, so that demolishing the Wall opens the house into the Extension.
+      const outline = walls.filter((id) => p.walls[id]!.exterior);
+      const roomy = outline.filter((id) => p.walls[id]!.neg || p.walls[id]!.pos);
+      const w = pick(roomy.length && g.i % 4 ? roomy : outline, g.i);
+      if (!w) return null;
+      const l = wallLine(p, p.walls[w]!);
+      const a = Math.round((l.t0 + g.t * (l.t1 - l.t0) - g.w / 2) / 50) * 50;
+      const probe = (c: number) =>
+        l.axis === 'h' ? D.insideOutline(a + g.w / 2, c) : D.insideOutline(c, a + g.w / 2);
+      const out = probe(l.lo - 1) ? 1 : probe(l.hi + 1) ? -1 : 0;
+      if (!out) return null;
+      const [c0, c1] = [l.c, l.c + out * g.d].sort((x, y) => x - y) as [number, number];
+      const rect =
+        l.axis === 'h' ? { x0: a, x1: a + g.w, y0: c0, y1: c1 } : { x0: c0, x1: c1, y0: a, y1: a + g.w };
+      return { op: 'drawRoom', rect, name: 'Extension' };
+    }
+    case 'shed': {
+      const b = planBounds(p);
+      if (!b) return null;
+      const snap = (v: number) => Math.round(v / 50) * 50;
+      const rect = g.below
+        ? { x0: snap(b.x0 + g.f * (b.x1 - b.x0)), y0: snap(b.y1 + g.gap) }
+        : { x0: snap(b.x1 + g.gap), y0: snap(b.y0 + g.f * (b.y1 - b.y0)) };
+      return { op: 'drawRoom', rect: { ...rect, x1: rect.x0 + g.w, y1: rect.y0 + g.l }, name: 'Shed' };
+    }
+    case 'open': {
+      // The Wall between an Extension and the house when there is one, else any exterior Wall.
+      const ext = new Set(
+        Object.values(p.walls)
+          .filter((w) => extensionWall(w))
+          .flatMap((w) => [w.neg, w.pos])
+      );
+      const against = walls.filter((id) => {
+        const w = p.walls[id]!;
+        return !w.drawn && !w.exterior && w.neg && w.pos && (ext.has(w.neg) || ext.has(w.pos));
+      });
+      const w = pick(against.length && g.i % 4 ? against : walls.filter((id) => p.walls[id]!.exterior), g.i);
+      return w ? { op: 'demolishWall', wall: w } : null;
+    }
   }
 }
 
@@ -396,18 +469,59 @@ const recorded = new Map<string, number>();
 function record(existing: Plan, gestures: readonly G[]): Scenario {
   let s = emptyScenario('s1', 'Option');
   for (const g of gestures) {
-    const ge = toGesture(applyScenario(existing, s).plan, g);
+    const before = applyScenario(existing, s).plan;
+    const ge = toGesture(before, g);
+    const r0 = rejections.count;
     const r = ge && recordChange(existing, s, ge);
+    // The soundness backstop, outside what it refuses by design: demolishing a Wall that leaves a Room or
+    // the Outline open (ADR 0010).
+    if (ge && ge.op !== 'demolishWall') {
+      const tally = g.k === 'extend' || g.k === 'shed' ? extensionGestures : scenarioGestures;
+      tally.count++;
+      if (rejections.count > r0) tally.rejected++;
+    }
     if (!r) continue;
     s = r.scenario;
-    recorded.set(ge.op, (recorded.get(ge.op) ?? 0) + 1);
+    const count = (k: string) => recorded.set(k, (recorded.get(k) ?? 0) + 1);
+    count(ge.op);
     const out = applyScenario(existing, s);
     // A recorded Change is never born a Conflict.
     expect(out.conflicts).toEqual([]);
     sound(out.plan, ge);
+    // The Room on the inside face of an Extension's Wall is inside the Outline it joined.
+    const D = derive(out.plan);
+    for (const [id, w] of Object.entries(out.plan.walls)) {
+      if (!extensionWall(w)) continue;
+      const l = D.walls[id]!.line;
+      const mid = (l.t0 + l.t1) / 2;
+      for (const [side, f] of [
+        ['neg', l.lo - 0.5],
+        ['pos', l.hi + 0.5]
+      ] as const) {
+        const room = w[side];
+        const inside = l.axis === 'v' ? D.insideOutline(f, mid) : D.insideOutline(mid, f);
+        if (room && inside) expect(D.parked).not.toContain(room);
+      }
+    }
+    const grew = rectsArea(extensionOf(existing, out.plan)) > rectsArea(extensionOf(existing, before));
+    if (ge.op === 'drawRoom' && grew && Object.values(out.plan.walls).some((w) => extensionWall(w)))
+      count('extension');
+    if (
+      g.k === 'open' &&
+      ge.op === 'demolishWall' &&
+      Object.keys(out.plan.rooms).length < Object.keys(before.rooms).length
+    )
+      count('opened');
   }
   return s;
 }
+
+/**
+ * Scenario gestures, and how many of them the soundness backstop refused. Extension gestures are counted
+ * apart: the others' rate (about 1.6%, mostly pushes) predates them.
+ */
+const scenarioGestures = { count: 0, rejected: 0 };
+const extensionGestures = { count: 0, rejected: 0 };
 
 function sound(p: Plan, why: unknown) {
   const errs = checkPlan(p);
@@ -525,33 +639,36 @@ test.fails('merge then move never leaves a Room on both faces of a Wall', () => 
   movesKeepingAreas(p, 0, 0, 50);
 });
 
+/** A Scenario recorded over a capture session replays the same from scratch, and soundly after more edits. */
+function replaysSoundly(before: Op[], gestures: G[], after: Op[], from?: Plan) {
+  const e0 = capture(before, from);
+  const s = record(e0, gestures);
+  // Replaying from scratch, as after reopening the Project, gives the same plan.
+  const again = applyScenario(clonePlan(e0), structuredClone(s));
+  expect(again.plan).toEqual(applyScenario(e0, s).plan);
+  statusesAddUp(e0, again);
+
+  const e1 = capture(after, e0);
+  const r = applyScenario(e1, s);
+  sound(r.plan, { after });
+  statusesAddUp(e1, r);
+  const ids = s.changes.map((c) => c.id);
+  expect(new Set(r.conflicts.map((c) => c.change)).size).toBe(r.conflicts.length);
+  for (const c of r.conflicts) expect(ids).toContain(c.change);
+}
+
 test('a Scenario replays soundly over any later Existing Plan edits', () => {
   fc.assert(
     fc.property(
       fc.array(op, { minLength: 1, maxLength: 20 }),
       fc.array(gesture, { minLength: 1, maxLength: 10 }),
       fc.array(op, { maxLength: 10 }),
-      (before, gestures, after) => {
-        const e0 = capture(before);
-        const s = record(e0, gestures);
-        // Replaying from scratch, as after reopening the Project, gives the same plan.
-        const again = applyScenario(clonePlan(e0), structuredClone(s));
-        expect(again.plan).toEqual(applyScenario(e0, s).plan);
-        statusesAddUp(e0, again);
-
-        const e1 = capture(after, e0);
-        const r = applyScenario(e1, s);
-        sound(r.plan, { after });
-        statusesAddUp(e1, r);
-        const ids = s.changes.map((c) => c.id);
-        expect(new Set(r.conflicts.map((c) => c.change)).size).toBe(r.conflicts.length);
-        for (const c of r.conflicts) expect(ids).toContain(c.change);
-      }
+      (before, gestures, after) => replaysSoundly(before, gestures, after)
     ),
     { numRuns: Number(process.env.RUNS ?? 300) }
   );
   // Every kind of gesture was recorded somewhere.
-  expect([...recorded.keys()].sort()).toEqual(
+  expect([...recorded.keys()].filter((k) => k !== 'extension' && k !== 'opened').sort()).toEqual(
     [
       'addOpening',
       'demolishWall',
@@ -565,7 +682,54 @@ test('a Scenario replays soundly over any later Existing Plan edits', () => {
       'setThickness'
     ].sort()
   );
-  if (process.env.STATS) console.log(Object.fromEntries(recorded));
+  if (process.env.STATS) console.log(Object.fromEntries(recorded), scenarioGestures);
+});
+
+/**
+ * A house whose Rooms are against its Outline, so Extensions have a Room to open into: a row of Rooms along
+ * the top of the Outline, and one along the bottom.
+ */
+const tiled = fc
+  .record({
+    w: len(6000, 14000),
+    l: len(7000, 11000),
+    top: fc.array(len(1500, 4000), { minLength: 1, maxLength: 4 }),
+    depth: len(2000, 3500),
+    bottom: len(1500, 5000),
+    under: len(1500, 3000)
+  })
+  .map((h) => {
+    let p = addOutline(emptyPlan(), h.w, h.l, { x: 0, y: 0 });
+    let x = 200;
+    for (const w of h.top) {
+      if (x + w > h.w - 200) break;
+      p = addRoom(p, { name: 'Top', w, l: h.depth, x, y: 200 }).plan;
+      x += w + 100;
+    }
+    const w = Math.min(h.bottom, h.w - 400);
+    return addRoom(p, { name: 'Bottom', w, l: h.under, x: 200, y: h.l - 200 - h.under }).plan;
+  });
+
+test('Extensions: Rooms drawn outside the Outline and exterior Walls demolished replay soundly', () => {
+  recorded.clear();
+  fc.assert(
+    fc.property(
+      tiled,
+      fc.array(op, { maxLength: 10 }),
+      fc.array(extensionGesture, { minLength: 1, maxLength: 10 }),
+      fc.array(op, { maxLength: 10 }),
+      (house, before, gestures, after) => replaysSoundly(before, gestures, after, house)
+    ),
+    { numRuns: Number(process.env.RUNS ?? 300) }
+  );
+  // Extensions were made, and the house opened into them.
+  expect(recorded.get('extension')).toBeGreaterThan(0);
+  expect(recorded.get('opened')).toBeGreaterThan(0);
+  if (process.env.STATS) console.log(Object.fromEntries(recorded), extensionGestures);
+  // The soundness backstop stays a backstop for them: under 1% (ADR 0012). A rate needs a sample, so it is
+  // checked on longer runs (RUNS=1000 and up); the default run makes only a few hundred of these gestures.
+  if (extensionGestures.count >= 1000)
+    expect(extensionGestures.rejected / extensionGestures.count).toBeLessThan(0.01);
 });
 
 /** Existing Plan edits that touch nothing a Scenario points at, or only nudge it. */

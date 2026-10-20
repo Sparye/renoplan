@@ -12,6 +12,7 @@ import {
   derive,
   drawRoom,
   drawWall,
+  extensionOf,
   formatMetres,
   moveOpening,
   prepareMove,
@@ -309,6 +310,7 @@ export function Canvas() {
           plan={plan}
           s={view.s}
           changes={changes && { existing, statuses: changes.statuses }}
+          extension={scenario ? extensionOf(existing, plan) : null}
           interactive
           roomsMove={!scenario}
           dragging={dragging}

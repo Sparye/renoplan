@@ -1,3 +1,4 @@
+import { extensionOf } from '@/core';
 import { comparisonTable } from '../compare/table';
 import { type EditorState, type Mode, comparedApplied } from '../editor/store';
 import type { Pane, Sheet } from './types';
@@ -18,7 +19,8 @@ export function comparisonSheet(
     return {
       title: name(m),
       plan: a?.plan ?? existing,
-      changes: a ? { existing, statuses: a.statuses } : null
+      changes: a ? { existing, statuses: a.statuses } : null,
+      extension: a ? extensionOf(existing, a.plan) : null
     };
   };
   const { left, right } = s.compare;

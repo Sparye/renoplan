@@ -1,5 +1,6 @@
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
 import { FileDown, Maximize, ZoomIn, ZoomOut } from 'lucide-react';
+import { extensionOf } from '@/core';
 import { Button } from '@/app/components/ui/button';
 import {
   DropdownMenu,
@@ -222,6 +223,7 @@ function Pane({ which }: { which: 'left' | 'right' }) {
               plan={a?.plan ?? existing}
               s={view.s}
               changes={a && { existing, statuses: a.statuses }}
+              extension={a && extensionOf(existing, a.plan)}
             />
           </g>
         </svg>

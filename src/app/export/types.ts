@@ -1,4 +1,4 @@
-import type { Plan } from '@/core';
+import type { Plan, Rect } from '@/core';
 import type { ShownChanges } from '../editor/PlanDrawing';
 
 /** One drawing on a sheet: a plan, with Show Changes when `changes` is given. */
@@ -6,6 +6,8 @@ export interface Pane {
   title: string;
   plan: Plan;
   changes?: ShownChanges | null;
+  /** Extension floor to flag (a Scenario outside the Existing Plan's Footprint). */
+  extension?: readonly Rect[] | null;
 }
 
 /**

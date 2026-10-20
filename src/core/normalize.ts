@@ -1,7 +1,8 @@
-import { Grid, type Rect, intersects } from './grid';
+import { Grid, type Rect, intersects, rectsArea } from './grid';
 import { RepairFailed, repairClaims } from './claims';
 import {
   deleteWall,
+  enclosedBy,
   endNode,
   incidence,
   isolate,
@@ -11,7 +12,17 @@ import {
   usableSpan,
   wallsAt
 } from './graph';
-import { type NodeId, type Plan, type Side, type WallId, claims, clonePlan, faceOf, wallLine } from './plan';
+import {
+  type NodeId,
+  type Plan,
+  type Side,
+  type WallId,
+  claims,
+  clonePlan,
+  extensionWall,
+  faceOf,
+  wallLine
+} from './plan';
 import type { Mm } from './units';
 
 // The normal form of the Wall graph (ADR 0009). Every command ends here.
@@ -347,6 +358,28 @@ function dropBare(p: Plan): boolean {
   return changed;
 }
 
+/**
+ * An Existing Plan Outline Wall between an Extension's Room and another Room is inside the house, wherever a
+ * push or a fusion brought the two together (ADR 0012) — if the Outline still closes around both without it.
+ * Capture has no Extensions, so this never fires there.
+ */
+function absorbOutline(p: Plan): boolean {
+  const extension = new Set<string>();
+  for (const w of Object.values(p.walls))
+    if (extensionWall(w)) for (const r of [w.neg, w.pos]) if (r) extension.add(r);
+  if (!extension.size) return false;
+  const outline = () => Object.keys(p.walls).filter((id) => p.walls[id]!.exterior);
+  for (const w of Object.values(p.walls)) {
+    if (!w.exterior || w.drawn || !w.neg || !w.pos || !(extension.has(w.neg) || extension.has(w.pos)))
+      continue;
+    const before = rectsArea(enclosedBy(p, outline()));
+    w.exterior = false;
+    if (rectsArea(enclosedBy(p, outline())) > before) return true;
+    w.exterior = true;
+  }
+  return false;
+}
+
 /** Trims stale claims (see repairClaims), on a copy so a failed repair leaves the draft untouched. */
 function tidyClaims(p: Plan): boolean {
   const q = clonePlan(p);
@@ -374,7 +407,7 @@ export function normalize(p: Plan): Plan {
       applyFusion(p, fu);
       continue;
     }
-    if (dedupe(p) || mergeCollinear(p) || tidyClaims(p) || dropBare(p)) continue;
+    if (absorbOutline(p) || dedupe(p) || mergeCollinear(p) || tidyClaims(p) || dropBare(p)) continue;
     break;
   }
   fitOpenings(p);

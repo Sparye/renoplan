@@ -19,6 +19,7 @@ import {
 import { guessRoomType } from '../roomType';
 import type { Mm } from '../units';
 import { detachRoom } from './detach';
+import { annexRoom, drawRoomThickness } from './extension';
 import { create, edit, finish } from './edit';
 import { MIN_ROOM, drawWall } from './walls';
 
@@ -311,13 +312,15 @@ export function nameSpace(p: Plan, x: number, y: number, name: string): { plan: 
 /**
  * Draw Room: a Room on a rectangle of Wall centrelines. New drawn Walls go along its sides wherever there
  * is no Wall yet, and the floor they close off becomes the Room. Drawn inside a Room, it carves the new
- * Room out of it, and that Room keeps the rest. A no-op unless the rectangle closes off a space.
+ * Room out of it, and that Room keeps the rest. Drawn outside the Outline, its Walls are exterior Walls'
+ * thickness and the Room joins the Outline as an Extension (ADR 0012). A no-op unless the rectangle closes
+ * off a space.
  */
 export function drawRoom(
   p: Plan,
   r: Rect,
   name: string,
-  thickness: Mm = p.defaults.interior
+  thickness: Mm = drawRoomThickness(p, r)
 ): { plan: Plan; id: RoomId | null } {
   const [x0, x1] = [Math.round(Math.min(r.x0, r.x1)), Math.round(Math.max(r.x0, r.x1))];
   const [y0, y1] = [Math.round(Math.min(r.y0, r.y1)), Math.round(Math.max(r.y0, r.y1))];
@@ -344,5 +347,5 @@ export function drawRoom(
   ] as const)
     q = drawWall(q, a, b, thickness, mid).plan;
   const n = nameSpace(q, mid.x, mid.y, name);
-  return n.id ? n : { plan: p, id: null };
+  return n.id ? { plan: annexRoom(n.plan, n.id), id: n.id } : { plan: p, id: null };
 }

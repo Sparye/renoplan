@@ -14,5 +14,5 @@ A Scenario is a set of Changes against the Existing Plan, not a blank layout and
 
 - A renovation is inherently a diff against what exists; tracking it lets the app say "demolishes 2 Walls, 1 with a Structural Mark" and makes Comparisons meaningful.
 - Elements of the Existing Plan need stable identities, since Changes refer to them. (ADR 0010: Rooms and Openings have them; Walls are found by where they are.)
-- Extensions fall out naturally: New Walls outside the Footprint are just New elements, flagged as Extension.
+- Extensions fall out naturally: New Walls outside the Footprint are just New elements, flagged as Extension. (ADR 0012: an Extension joins the Scenario's Outline.)
 - What happens to Scenarios when the Existing Plan is edited later is a follow-on decision.
