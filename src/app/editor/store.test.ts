@@ -150,6 +150,22 @@ describe('Scenario Mode', () => {
     st().undo();
     expect(st().project.scenarios[0]!.changes).toEqual([]);
   });
+
+  test('deleting a Room turns it into Unlabelled Space, selected; the Existing Plan keeps it', () => {
+    const { p, d } = house();
+    const { st, act } = editor(p);
+    st().addScenario();
+    act.removeRoom(d);
+    const plan = currentPlan(st());
+    expect(plan.rooms[d]).toBeUndefined();
+    expect(Object.keys(plan.walls)).toHaveLength(Object.keys(p.walls).length);
+    expect(st().history.present.rooms[d]).toBeDefined();
+    expect(st().project.scenarios[0]!.changes.map((c) => c.op)).toEqual(['removeRoom']);
+    const sel = st().selection;
+    expect(sel?.kind).toBe('space');
+    const { x, y } = sel as { x: number; y: number };
+    expect(derive(plan).spaceAt(x, y)).toBeGreaterThanOrEqual(0);
+  });
 });
 
 describe('Comparison', () => {

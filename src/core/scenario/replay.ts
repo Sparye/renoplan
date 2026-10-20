@@ -13,6 +13,7 @@ import {
   renameRoom,
   setRoomType,
   setWallThickness,
+  unnameRoom,
   updateOpening
 } from '../commands';
 import { edit } from '../commands/edit';
@@ -170,6 +171,8 @@ function run(p: Plan, c: Change, lookup: Lookup): Outcome {
       return room(c.room, (id) => renameRoom(p, id, c.name));
     case 'setRoomType':
       return room(c.room, (id) => setRoomType(p, id, c.type));
+    case 'removeRoom':
+      return room(c.room, (id) => unnameRoom(p, id));
   }
 }
 
@@ -362,6 +365,10 @@ function toChange(existing: Plan, r: Replay, g: Gesture, id: ChangeId): Change |
     case 'setRoomType': {
       const t = room(g.room);
       return t === null ? null : { id, op: g.op, room: t, type: g.type };
+    }
+    case 'removeRoom': {
+      const t = room(g.room);
+      return t === null ? null : { id, op: g.op, room: t };
     }
   }
 }

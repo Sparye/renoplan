@@ -31,6 +31,8 @@ function sample(): Project {
   const o = Object.keys(applyScenario(p, s).plan.openings).find((id) => !p.openings[id])!;
   step({ op: 'modifyOpening', opening: o, patch: { width: 700 } });
   step({ op: 'drawRoom', rect: { x0: 6000, y0: 5000, x1: 9900, y1: 7900 }, name: 'Garage' });
+  const garage = Object.keys(applyScenario(p, s).plan.rooms).find((id) => !p.rooms[id])!;
+  step({ op: 'removeRoom', room: garage });
   return {
     id: 'p1',
     name: 'Home',
@@ -88,7 +90,8 @@ describe('document', () => {
       'drawWall',
       'addOpening',
       'modifyOpening',
-      'drawRoom'
+      'drawRoom',
+      'removeRoom'
     ]);
     expect(s!.changes[3]).toMatchObject({ opening: { created: s!.changes[2]!.id } });
     const before = applyScenario(project.existingPlan, project.scenarios[0]!);
@@ -105,6 +108,12 @@ describe('document', () => {
     const doc = JSON.parse(serialize(sample()));
     damage(doc.project.scenarios[0].changes[i]);
     expect(fromDocument(doc).ok).toBe(false);
+  });
+
+  test('opens a v2 document, migrated to the current version', () => {
+    const project = sample();
+    const doc = { ...JSON.parse(serialize(project)), version: 2 };
+    expect(fromDocument(doc)).toEqual({ ok: true, project });
   });
 
   test('rejects Scenarios with clashing ids', () => {

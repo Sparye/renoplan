@@ -4,7 +4,16 @@ import { emptyPlan, wallLine } from '../plan';
 import { sharedWalls, size, valid, wallAt } from '../test/helpers';
 import { addOpening } from './openings';
 import { addOutline, addWing } from './outline';
-import { addRoom, deleteRoom, mergeRooms, moveRoom, nameSpace, renameRoom, setRoomSize } from './rooms';
+import {
+  addRoom,
+  deleteRoom,
+  mergeRooms,
+  moveRoom,
+  nameSpace,
+  renameRoom,
+  setRoomSize,
+  unnameRoom
+} from './rooms';
 import { pushWall, setWallThickness } from './walls';
 
 const base = () => valid(addOutline(emptyPlan(), 10000, 8000, { x: 0, y: 0 }));
@@ -274,6 +283,29 @@ describe('merge, delete, name', () => {
     expect(derive(n.plan).unlabelled).toHaveLength(0);
     expect(derive(n.plan).rooms[n.id!]!.area).toBe((5500 - 4300) * 7600);
     expect(n.plan.rooms[n.id!]!.type).toBe('hallway');
+  });
+
+  test('unnaming a named space gives back the Unlabelled Space', () => {
+    let p = base();
+    p = addRoom(p, { name: 'A', w: 4000, l: 7600, x: 200, y: 200 }).plan;
+    p = valid(addRoom(p, { name: 'B', w: 4000, l: 7600, x: 5600, y: 200 }).plan);
+    const n = nameSpace(p, 5000, 4000, 'Hallway');
+    const q = valid(unnameRoom(n.plan, n.id!));
+    expect(q.rooms[n.id!]).toBeUndefined();
+    expect(derive(q).unlabelled.map((s) => s.area)).toEqual([(5500 - 4300) * 7600]);
+    expect(Object.keys(q.walls)).toHaveLength(Object.keys(p.walls).length);
+  });
+
+  test('unnaming a captured Room keeps its Walls, unlike deleting it', () => {
+    const c = addRoom(base(), { name: 'Cupboard', w: 1000, l: 1000, x: 2000, y: 2000 });
+    const q = valid(unnameRoom(c.plan, c.id!));
+    expect(Object.keys(q.walls)).toHaveLength(8);
+    expect(
+      derive(q)
+        .unlabelled.map((s) => s.area)
+        .sort((a, b) => a - b)
+    ).toEqual([1000 * 1000, 9600 * 7600 - 1200 * 1200]);
+    expect(Object.keys(valid(deleteRoom(c.plan, c.id!)).walls)).toHaveLength(4);
   });
 
   test('naming the space around an island Room does not claim the island', () => {
