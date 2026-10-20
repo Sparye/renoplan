@@ -6,6 +6,7 @@ import {
   type WallId,
   along,
   claims,
+  extensionWall,
   faceOf,
   faceOffsets,
   mintId,
@@ -112,13 +113,15 @@ export function isolateNodes(p: Plan, room: RoomId) {
 
 /**
  * Whether a Room shares a Wall it claims: with a Room on the other face, the Outline, or the user who drew
- * it. A Room never owns such a Wall, so it detaches from it rather than moving or removing it.
+ * it. A Room never owns such a Wall, so it detaches from it rather than moving or removing it. An
+ * Extension's outer Wall is the exception: its Room owns it, so pushing it moves it (ADR 0012).
  */
 export function sharesWall(p: Plan, id: WallId, room: RoomId): boolean {
   const w = p.walls[id]!;
   const side = sideOf(w, room);
   if (!side) return false;
-  return w.exterior || w.drawn || w[side === 'neg' ? 'pos' : 'neg'] !== null;
+  const other = w[side === 'neg' ? 'pos' : 'neg'] !== null;
+  return extensionWall(w) ? other : w.exterior || w.drawn || other;
 }
 
 /** Detaches a Room from every Wall it shares, so it can move or resize without moving its neighbours. */

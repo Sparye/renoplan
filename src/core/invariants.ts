@@ -1,7 +1,8 @@
 import { derive } from './derive';
+import { Grid } from './grid';
 import { incidence, materialRect, usableSpan } from './graph';
 import { faceCovered, findFusion } from './normalize';
-import { type Plan, faceOf, wallLine } from './plan';
+import { type Plan, extensionWall, faceOf, wallLine } from './plan';
 
 /** Everything that must hold for a plan in normal form. Returns the violations; empty means valid. */
 export function checkPlan(p: Plan): string[] {
@@ -105,6 +106,7 @@ export function isSound(p: Plan): boolean {
   const D = derive(p);
   if (Object.values(D.rooms).some((r) => !r.area)) return false;
   if (!D.outline && Object.values(p.walls).some((w) => w.exterior)) return false;
+  if (!outlineIntact(p)) return false;
   if (Object.values(p.walls).some((w) => w.neg && w.neg === w.pos)) return false;
   let rects: Map<string, ReturnType<typeof materialRect>> | null = null;
   for (const [id, w] of Object.entries(p.walls))
@@ -122,5 +124,42 @@ export function isSound(p: Plan): boolean {
       rects ??= new Map(Object.keys(p.walls).map((k) => [k, materialRect(p, k)]));
       if (!faceCovered(p, id, side, rects)) return false;
     }
+  return true;
+}
+
+/**
+ * With Extensions, the Outline may be several loops (one standing free), so one loop closing is not enough
+ * for it to be sound: an Outline Wall with floor outside the Outline on both faces is no longer around
+ * anything, as when the house's loop is opened while an Extension's stays closed (ADR 0012). Without Extensions — all of
+ * capture — one loop is all there is.
+ */
+function outlineIntact(p: Plan): boolean {
+  if (!Object.values(p.walls).some((w) => extensionWall(w))) return true;
+  const D = derive(p);
+  const inside = D.outline?.inside ?? [];
+  const walls = Object.values(D.walls).map((w) => w.rect);
+  const g = new Grid(walls, {
+    xs: inside.flatMap((r) => [r.x0, r.x1]),
+    ys: inside.flatMap((r) => [r.y0, r.y1])
+  });
+  const solid = g.mask(walls);
+  const within = g.mask(inside);
+  // Floor outside the Outline.
+  const open = (c: number) => c >= 0 && !solid[c] && !within[c];
+  for (const [id, w] of Object.entries(p.walls)) {
+    if (!w.exterior) continue;
+    const l = D.walls[id]!.line;
+    const ts = l.axis === 'v' ? g.ys : g.xs;
+    const at = (f: number, t: number) => (l.axis === 'v' ? g.cellAt(f, t) : g.cellAt(t, f));
+    let lo = false;
+    let hi = false;
+    for (let i = 0; i + 1 < ts.length; i++) {
+      if (ts[i]! < l.t0 || ts[i + 1]! > l.t1) continue;
+      const t = (ts[i]! + ts[i + 1]!) / 2;
+      lo ||= open(at(l.lo - 0.5, t));
+      hi ||= open(at(l.hi + 0.5, t));
+    }
+    if (lo && hi) return false;
+  }
   return true;
 }
