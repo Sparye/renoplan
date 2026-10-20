@@ -314,6 +314,7 @@ const gesture = fc.oneof(
     })
   },
   { weight: 1, arbitrary: fc.record({ k: fc.constant('rename' as const), i: fc.nat() }) },
+  { weight: 1, arbitrary: fc.record({ k: fc.constant('remove' as const), i: fc.nat() }) },
   { weight: 2, arbitrary: extend },
   { weight: 1, arbitrary: shed },
   { weight: 2, arbitrary: open }
@@ -404,6 +405,10 @@ function toGesture(p: Plan, g: G): Gesture | null {
     case 'rename': {
       const r = pick(Object.keys(p.rooms), g.i);
       return r ? { op: 'renameRoom', room: r, name: `Room ${g.i}` } : null;
+    }
+    case 'remove': {
+      const r = pick(Object.keys(p.rooms), g.i);
+      return r ? { op: 'removeRoom', room: r } : null;
     }
     case 'extend': {
       // One side of the rectangle on an exterior Wall's centreline, the rest outside the Outline.
@@ -678,6 +683,7 @@ test('a Scenario replays soundly over any later Existing Plan edits', () => {
       'drawRoom',
       'pushWall',
       'removeOpening',
+      'removeRoom',
       'renameRoom',
       'setThickness'
     ].sort()

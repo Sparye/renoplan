@@ -5,7 +5,7 @@ import { type Plan, type Scenario, checkPlan, normalizePlan } from '@/core';
 // Every version stays decodable: an older document is migrated step by step to the current one.
 
 export const FORMAT = 'renoplan';
-export const VERSION = 2;
+export const VERSION = 3;
 
 const Mm = Schema.Int;
 const Id = Schema.String;
@@ -86,7 +86,8 @@ const Change = Schema.Union([
     thickness: Mm.check(Schema.isGreaterThanOrEqualTo(1))
   }),
   change('renameRoom', { room: Target, name: Schema.String }),
-  change('setRoomType', { room: Target, type: RoomType })
+  change('setRoomType', { room: Target, type: RoomType }),
+  change('removeRoom', { room: Target })
 ]);
 const ScenarioSchema = Schema.Struct({
   id: Id,
@@ -95,9 +96,9 @@ const ScenarioSchema = Schema.Struct({
   nextId: Mm
 });
 
-export const DocumentV2 = Schema.Struct({
+export const DocumentV3 = Schema.Struct({
   format: Schema.Literal(FORMAT),
-  version: Schema.Literal(2),
+  version: Schema.Literal(3),
   project: Schema.Struct({
     id: Id,
     name: Schema.String,
@@ -148,7 +149,10 @@ const MIGRATIONS: Record<number, (doc: Json) => Json> = {
         scenarios: []
       }
     };
-  }
+  },
+  // v3: a Scenario can remove a Room, turning it back into Unlabelled Space. Nothing to reshape; the bump
+  // makes an older Renoplan say the file is newer instead of damaged.
+  2: (doc) => ({ ...doc, version: 3 })
 };
 
 export function toDocument(project: Project) {
@@ -171,7 +175,7 @@ export function fromDocument(input: unknown): Opened {
     if (!step) return { ok: false, error: `Cannot read format ${v}.` };
     doc = step(doc);
   }
-  const decoded = Schema.decodeUnknownResult(DocumentV2)(doc);
+  const decoded = Schema.decodeUnknownResult(DocumentV3)(doc);
   if (Result.isFailure(decoded))
     return { ok: false, error: `The file is damaged: ${String(decoded.failure)}` };
   const p = decoded.success.project;

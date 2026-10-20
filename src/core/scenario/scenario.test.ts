@@ -214,6 +214,34 @@ describe('each gesture', () => {
     expect(r.statuses.rooms[d]).toBe('retained');
   });
 
+  test('removing a Room makes it Unlabelled Space; every Wall is Retained', () => {
+    const { p, b } = house();
+    const s = scenario(p, () => ({ op: 'removeRoom', room: b }));
+    expect(s.changes.map(changeKind)).toEqual(['demolished']);
+    for (const r of [applyScenario(p, s), fresh(p, s)]) {
+      valid(r.plan);
+      expect(r.plan.rooms[b]).toBeUndefined();
+      expect(r.statuses.demolishedRooms).toEqual([b]);
+      expect(demolishedLength(r)).toBe(0);
+      expect(newLength(r)).toBe(0);
+      expect(derive(r.plan).spaceAt(1700, 5600)).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  test('removing a Room the Scenario named gives back the space', () => {
+    const { p } = house();
+    const s = scenario(
+      p,
+      () => ({ op: 'nameSpace', x: 9200, y: 4000, name: 'Hallway' }),
+      (q) => ({ op: 'removeRoom', room: Object.keys(q.rooms).find((id) => q.rooms[id]!.name === 'Hallway')! })
+    );
+    expect(s.changes[1]).toMatchObject({ op: 'removeRoom', room: { created: 'c1' } });
+    const r = fresh(p, s);
+    valid(r.plan);
+    expect(r.conflicts).toEqual([]);
+    expect(derive(r.plan).unlabelled.map((x) => x.area)).toEqual(derive(p).unlabelled.map((x) => x.area));
+  });
+
   test('a gesture that does nothing, or names nothing, is not recorded', () => {
     const { p, k } = house();
     const s0 = emptyScenario('s', 'x');
@@ -221,6 +249,7 @@ describe('each gesture', () => {
     expect(recordChange(p, s0, { op: 'renameRoom', room: 'r999', name: 'Nope' })).toBeNull();
     expect(recordChange(p, s0, { op: 'pushWall', wall: 'w999', delta: 100 })).toBeNull();
     expect(recordChange(p, s0, { op: 'removeOpening', opening: 'o999' })).toBeNull();
+    expect(recordChange(p, s0, { op: 'removeRoom', room: 'r999' })).toBeNull();
     expect(recordChange(p, s0, { op: 'nameSpace', x: -5000, y: -5000, name: 'Void' })).toBeNull();
     expect(recordChange(p, s0, { op: 'drawWall', a: { x: 0, y: 0 }, b: { x: 10, y: 10 } })).toBeNull();
   });

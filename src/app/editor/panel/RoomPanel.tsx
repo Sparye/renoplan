@@ -4,7 +4,6 @@ import {
   type Rect,
   type RoomId,
   type RoomType,
-  deleteRoom,
   derive,
   extensionOf,
   intersects,
@@ -112,16 +111,10 @@ export function RoomPanel({ id }: { id: RoomId }) {
         </p>
       )}
       {overlapping && <p className="text-destructive text-xs">Overlaps another room.</p>}
-      {!scenario && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="text-destructive"
-          onClick={() => commit(deleteRoom(plan, id), null)}
-        >
-          Delete room
-        </Button>
-      )}
+      <Button variant="outline" size="sm" className="text-destructive" onClick={() => act.removeRoom(id)}>
+        Delete room
+      </Button>
+      {scenario && <Hint>Its walls stay; the floor becomes unlabelled space.</Hint>}
     </Section>
   );
 }

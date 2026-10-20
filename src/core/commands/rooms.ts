@@ -220,6 +220,23 @@ export function deleteRoom(p: Plan, room: RoomId): Plan {
 }
 
 /**
+ * Turns a Room back into Unlabelled Space: it lets go of its Wall faces, and every Wall stays. A Wall it
+ * leaves bounding no Room is kept as drawn, so it stays where it stands (ADR 0010).
+ */
+export function unnameRoom(p: Plan, room: RoomId): Plan {
+  if (!p.rooms[room]) return p;
+  return edit(p, (d) => {
+    for (const w of Object.values(d.walls)) {
+      const side = sideOf(w, room);
+      if (!side) continue;
+      w[side] = null;
+      if (!w.neg && !w.pos && !w.exterior) w.drawn = true;
+    }
+    delete d.rooms[room];
+  });
+}
+
+/**
  * Removes the Shared Wall between two Rooms, merging them. The larger Room keeps its name, unless `prefer`
  * names one of the two (a Scenario replaying a merge keeps the Room it kept when recorded). Rooms on two
  * sides of the Outline never merge.

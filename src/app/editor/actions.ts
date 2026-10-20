@@ -11,6 +11,7 @@ import {
   type WallId,
   addOpening,
   deleteOpening,
+  deleteRoom,
   derive,
   mergeRooms,
   moveOpening,
@@ -47,6 +48,8 @@ export interface Actions {
   nameSpace(x: Mm, y: Mm, name: string): void;
   renameRoom(id: RoomId, name: string): void;
   setRoomType(id: RoomId, type: RoomType): void;
+  /** In the Existing Plan, deletes a Room and its own Walls; in a Scenario, turns it into Unlabelled Space. */
+  removeRoom(id: RoomId): void;
 }
 
 export function actions(useEditor: EditorStore): Actions {
@@ -177,6 +180,18 @@ export function actions(useEditor: EditorStore): Actions {
     setRoomType(id, type) {
       if (scenario()) st().record({ op: 'setRoomType', room: id, type });
       else st().commit(setRoomType(plan(), id, type));
+    },
+    removeRoom(id) {
+      const p = plan();
+      if (!scenario()) {
+        st().commit(deleteRoom(p, id), null);
+        return;
+      }
+      // The space it leaves behind stays selected, ready to be named again.
+      const r = derive(p).rooms[id]?.label;
+      st().record({ op: 'removeRoom', room: id }, (q) =>
+        r && derive(q).spaceAt(r.x, r.y) >= 0 ? { kind: 'space', x: r.x, y: r.y } : null
+      );
     }
   };
 }

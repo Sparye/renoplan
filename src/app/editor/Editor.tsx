@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { deleteRoom } from '@/core';
 import type { Project } from '@/persistence';
 import { Comparison } from '../compare/Comparison';
 import { newId, projects } from '../projects';
@@ -9,7 +8,7 @@ import { EditorContext } from './context';
 import { SidePanel } from './panel/SidePanel';
 import { StartOverlay } from './StartOverlay';
 import { ScenarioTabs } from './ScenarioTabs';
-import { createEditor, currentPlan } from './store';
+import { createEditor } from './store';
 import { Toolbar } from './Toolbar';
 
 export function Editor({ project }: { project: Project }) {
@@ -62,8 +61,7 @@ export function Editor({ project }: { project: Project }) {
         if (s?.kind === 'opening') act.removeOpening(s.id);
         // Removing the Wall between two Rooms merges them; in a Scenario any Wall can be demolished.
         else if (s?.kind === 'wall') act.removeWall(s.id);
-        else if (s?.kind === 'room' && st.mode.kind === 'existing')
-          st.commit(deleteRoom(currentPlan(st), s.id), null);
+        else if (s?.kind === 'room') act.removeRoom(s.id);
       }
     };
     window.addEventListener('keydown', onKey);

@@ -121,6 +121,9 @@ export function ScenarioPanel() {
           <li>
             <b className="text-foreground">Click unlabelled space</b> — make all of it a room
           </li>
+          <li>
+            <b className="text-foreground">Select a room</b> — Delete turns it back into unlabelled space
+          </li>
           <li>⌘Z / ⇧⌘Z undo/redo this scenario · Esc</li>
         </ul>
       </Section>
@@ -224,5 +227,7 @@ function describe(c: Change, name: (t: Target | null) => string | null): string 
       return `Renamed ${name(c.room) ?? 'a room'} to ${c.name}`;
     case 'setRoomType':
       return `Made ${name(c.room) ?? 'a room'} a ${c.type}`;
+    case 'removeRoom':
+      return `Removed ${name(c.room) ?? 'a room'}, leaving unlabelled space`;
   }
 }

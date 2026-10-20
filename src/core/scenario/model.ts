@@ -50,7 +50,9 @@ export type Gesture =
   /** A Room on a rectangle of Wall centrelines (drawRoom). */
   | { op: 'drawRoom'; rect: Box; name: string; thickness?: Mm }
   | { op: 'renameRoom'; room: RoomId; name: string }
-  | { op: 'setRoomType'; room: RoomId; type: RoomType };
+  | { op: 'setRoomType'; room: RoomId; type: RoomType }
+  /** Turns a Room back into Unlabelled Space; its Walls stay (unnameRoom). */
+  | { op: 'removeRoom'; room: RoomId };
 
 export interface Point {
   x: Mm;
@@ -82,6 +84,7 @@ export type Change = { id: ChangeId } & (
   | { op: 'drawRoom'; rect: Box; name: string; thickness: Mm }
   | { op: 'renameRoom'; room: Target; name: string }
   | { op: 'setRoomType'; room: Target; type: RoomType }
+  | { op: 'removeRoom'; room: Target }
 );
 
 export interface Scenario {
@@ -101,6 +104,7 @@ export function changeKind(c: Pick<Change, 'op'>): ChangeKind {
   switch (c.op) {
     case 'demolishWall':
     case 'removeOpening':
+    case 'removeRoom':
       return 'demolished';
     case 'drawWall':
     case 'addOpening':
