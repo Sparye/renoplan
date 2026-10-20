@@ -1,3 +1,4 @@
+import { extensionOf } from '@/core';
 import { exportName } from '../files';
 import { type EditorState, activeApplied, activeScenario } from '../editor/store';
 import type { ExportFormat, Sheet } from './types';
@@ -29,7 +30,8 @@ export function editorSheet(
       {
         title: scenario.name,
         plan: a.plan,
-        changes: s.changesHidden[scenario.id] ? null : { existing, statuses: a.statuses }
+        changes: s.changesHidden[scenario.id] ? null : { existing, statuses: a.statuses },
+        extension: extensionOf(existing, a.plan)
       }
     ]
   };

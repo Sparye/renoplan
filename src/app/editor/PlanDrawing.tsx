@@ -1,5 +1,13 @@
 import { type ReactNode, useId } from 'react';
-import { type ChangeStatuses, type Plan, type Rect, derive, formatArea, formatMetres } from '@/core';
+import {
+  type ChangeStatuses,
+  type Plan,
+  type Rect,
+  derive,
+  formatArea,
+  formatMetres,
+  intersects
+} from '@/core';
 import { Dimension, Label, OpeningShape, TINT, rectsPath } from './drawing';
 
 /** Show Changes for a Scenario: the Existing Plan it changes, and the Change Status of everything. */
@@ -14,6 +22,8 @@ export interface PlanDrawingProps {
   s: number;
   /** Draws Demolished Walls and Openings dashed and New ones highlighted (Show Changes). */
   changes?: ShownChanges | null;
+  /** Extension floor (outside the Existing Plan's Footprint), always flagged in a Scenario. */
+  extension?: readonly Rect[] | null;
   /** The editor canvas: hit targets and cursors. A read-only drawing (Comparison, Export) has none. */
   interactive?: boolean;
   /** Whether dragging inside a Room moves it (the Existing Plan), for its cursor. */
@@ -113,6 +123,20 @@ export function PlanDrawing(props: PlanDrawingProps) {
 
       {changes && !dragging && <NewWalls plan={plan} walls={changes.statuses.walls} />}
 
+      {/* Over the Walls: Extension floor reaches the outer face of its exterior Walls. */}
+      {props.extension && props.extension.length > 0 && (
+        <path
+          d={rectsPath(props.extension)}
+          fill="none"
+          stroke="var(--plan-extension)"
+          strokeWidth={2}
+          strokeDasharray="8 4"
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+          data-testid="extension"
+        />
+      )}
+
       {Object.entries(plan.openings).map(([id, o]) => {
         const g = D.walls[o.wall];
         return g ? (
@@ -155,18 +179,19 @@ export function PlanDrawing(props: PlanDrawingProps) {
           const roomy = Math.min(big.x1 - big.x0, big.y1 - big.y0) * s > 70;
           const { x, y } = g.label;
           const fresh = changes && changes.statuses.rooms[id] === 'new';
+          const extended = props.extension?.some((e) => g.rects.some((r) => intersects(r, e)));
           return (
             <g key={id}>
-              {fresh && (
+              {(fresh || extended) && (
                 <Label
                   x={x}
                   y={y - px(roomy ? 26 : 16)}
                   size={10}
                   px={px}
                   weight={600}
-                  fill="var(--plan-new)"
+                  fill={extended ? 'var(--plan-extension)' : 'var(--plan-new)'}
                 >
-                  NEW
+                  {fresh && extended ? 'NEW · EXTENSION' : extended ? 'EXTENSION' : 'NEW'}
                 </Label>
               )}
               <Label x={x} y={y - px(roomy ? 10 : 0)} size={13} px={px} weight={600}>

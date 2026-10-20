@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import {
   ROOM_TYPES,
+  type Rect,
   type RoomId,
   type RoomType,
   deleteRoom,
   derive,
+  extensionOf,
+  intersects,
   formatArea,
   formatMetres,
   setRoomSize
@@ -23,6 +26,7 @@ export function RoomPanel({ id }: { id: RoomId }) {
   const plan = useEditor(currentPlan);
   const scenario = useEditor((s) => s.mode.kind === 'scenario');
   const isNew = useEditor((s) => activeApplied(s)?.statuses.rooms[id] === 'new');
+  const existing = useEditor((s) => s.history.present);
   const commit = useEditor((s) => s.commit);
   const room = plan.rooms[id]!;
   const D = derive(plan);
@@ -32,6 +36,12 @@ export function RoomPanel({ id }: { id: RoomId }) {
   const b = g.bounds;
   const W = b ? b.x1 - b.x0 : 0;
   const L = b ? b.y1 - b.y0 : 0;
+  // Extension floor in this Room: it reaches outside the Existing Plan's Footprint.
+  const extension = scenario
+    ? extensionOf(existing, plan)
+        .flatMap((e) => g.rects.filter((q) => intersects(e, q)).map((q) => clip(e, q)))
+        .reduce((n, r) => n + (r.x1 - r.x0) * (r.y1 - r.y0), 0)
+    : 0;
   const overlapping = D.overlaps.some((r) =>
     g.rects.some(
       (q) => Math.min(r.x1, q.x1) > Math.max(r.x0, q.x0) && Math.min(r.y1, q.y1) > Math.max(r.y0, q.y0)
@@ -96,6 +106,11 @@ export function RoomPanel({ id }: { id: RoomId }) {
         <p className="text-muted-foreground text-xs">Not placed yet — drag it into the outline.</p>
       )}
       {D.crossing.includes(id) && <p className="text-destructive text-xs">Crosses the outline.</p>}
+      {extension > 0 && (
+        <p className="text-xs text-violet-700">
+          Extension: {formatArea(extension)} m² of it is outside the existing plan&rsquo;s footprint.
+        </p>
+      )}
       {overlapping && <p className="text-destructive text-xs">Overlaps another room.</p>}
       {!scenario && (
         <Button
@@ -110,3 +125,10 @@ export function RoomPanel({ id }: { id: RoomId }) {
     </Section>
   );
 }
+
+const clip = (a: Rect, b: Rect): Rect => ({
+  x0: Math.max(a.x0, b.x0),
+  y0: Math.max(a.y0, b.y0),
+  x1: Math.min(a.x1, b.x1),
+  y1: Math.min(a.y1, b.y1)
+});

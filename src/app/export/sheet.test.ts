@@ -8,6 +8,7 @@ import {
   derive,
   emptyPlan,
   emptyScenario,
+  extensionOf,
   recordChange
 } from '@/core';
 import { exportName, fileName } from '../files';
@@ -81,6 +82,27 @@ describe('sheet', () => {
     const hidden = buildSheet(one({ title: 'Option A', plan })).svg;
     expect(hidden).not.toContain('data-testid="legend"');
     expect(hidden).not.toContain('data-testid="demolished"');
+  });
+
+  test('an Extension is flagged as on the canvas, with Show Changes or without, and in the legend', () => {
+    const { p } = house();
+    const s = recordChange(p, emptyScenario('s1', 'Option B'), {
+      op: 'drawRoom',
+      rect: { x0: 9900, y0: 1000, x1: 13000, y1: 3500 },
+      name: 'Studio'
+    })!.scenario;
+    const a = applyScenario(p, s);
+    const extension = extensionOf(p, a.plan);
+    expect(extension).not.toEqual([]);
+    for (const changes of [{ existing: p, statuses: a.statuses }, null]) {
+      const svg = buildSheet(one({ title: 'Option B', plan: a.plan, changes, extension })).svg;
+      expect(svg).toContain('data-testid="extension"');
+      expect(svg).toContain(`stroke="${TOKENS['plan-extension']}"`);
+      expect(svg).toContain('>Extension</text>');
+      expect(svg).toMatch(/>(NEW · )?EXTENSION<\/text>/);
+      expect(svg).not.toContain('var(');
+    }
+    expect(buildSheet(one({ title: 'Existing plan', plan: p })).svg).not.toContain('data-testid="extension"');
   });
 
   test('two panes side by side with a table go on A3, at one shared scale', () => {
